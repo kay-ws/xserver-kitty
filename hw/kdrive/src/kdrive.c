@@ -524,6 +524,14 @@ KdProcessArgument(int argc, char **argv, int i)
         return 2;
     }
 
+    if (!strcmp (argv[i], "-exec")) {
+        if ((i+1) < argc)
+            kdExecuteCommand = argv[i + 1];
+        else
+            UseMsg();
+        return 2;
+    }
+
     return 0;
 }
 

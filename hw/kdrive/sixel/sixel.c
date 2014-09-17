@@ -1261,4 +1261,3 @@ void OsVendorInit (void)
 {
     KdOsInit (&sixelOsFuncs);
 }
-
