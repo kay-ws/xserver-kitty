@@ -316,6 +316,7 @@ OsInit(void)
         LockServer();
         been_here = TRUE;
     }
+    InitNotifyFds();
     TimerInit();
     OsVendorInit();
     OsResetSignals();
