@@ -224,22 +224,9 @@ OsInit(void)
 #endif
 
 #if !defined(XQUARTZ)    /* STDIN is already /dev/null and STDOUT/STDERR is managed by console_redirect.c */
-#if 0 /* for SIXEL */
-# if defined(__APPLE__)
-        int devnullfd = open(devnull, O_RDWR, 0);
-        assert(devnullfd > 2);
-
-        dup2(devnullfd, STDIN_FILENO);
-        dup2(devnullfd, STDOUT_FILENO);
-        close(devnullfd);
-# elif !defined(__CYGWIN__)
-        fclose(stdin);
-        fclose(stdout);
-# endif
-#endif
         /* 
-         * If a write of zero bytes to stderr returns non-zero, i.e. -1, 
-         * then writing to stderr failed, and we'll write somewhere else 
+         * If a write of zero bytes to stderr returns non-zero, i.e. -1,
+         * then writing to stderr failed, and we'll write somewhere else
          * instead. (Apparently this never happens in the Real World.)
          */
         if (write(2, fname, 0) == -1) {
