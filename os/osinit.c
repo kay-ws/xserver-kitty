@@ -195,6 +195,7 @@ OsInit(void)
 #ifdef BUSFAULT
         busfault_init();
 #endif
+        InitNotifyFds();
 
 #ifdef HAVE_BACKTRACE
         /*
@@ -316,7 +317,6 @@ OsInit(void)
         LockServer();
         been_here = TRUE;
     }
-    InitNotifyFds();
     TimerInit();
     OsVendorInit();
     OsResetSignals();
