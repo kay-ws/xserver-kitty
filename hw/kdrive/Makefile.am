@@ -1,7 +1,3 @@
-if BUILD_KDRIVEFBDEVLIB
-FBDEV_SUBDIRS = fbdev
-endif
-
 if XSIXELSERVER
 XSIXEL_SUBDIRS = sixel
 endif
@@ -15,8 +11,7 @@ LINUX_SUBDIRS = linux
 endif
 
 SERVER_SUBDIRS = 		\
-	$(XSIXEL_SUBDIRS)		\
-	$(FBDEV_SUBDIRS)	\
+	$(XSIXEL_SUBDIRS)	\
 	$(XEPHYR_SUBDIRS)
 
 SUBDIRS =			\
@@ -24,7 +19,7 @@ SUBDIRS =			\
 	$(LINUX_SUBDIRS)	\
 	$(SERVER_SUBDIRS)
 
-DIST_SUBDIRS = fbdev sixel ephyr src linux
+DIST_SUBDIRS = ephyr sixell src linux
 
 relink:
 	$(AM_V_at)for i in $(SERVER_SUBDIRS) ; do $(MAKE) -C $$i relink || exit 1 ; done
