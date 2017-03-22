@@ -67,8 +67,6 @@ dnl xkb-config.h covers XKB for the Xorg and Xnest DDXs.
 AC_CONFIG_HEADERS(include/xkb-config.h)
 dnl xwin-config.h covers the XWin DDX.
 AC_CONFIG_HEADERS(include/xwin-config.h)
-dnl kdrive-config.h covers the kdrive DDX
-AC_CONFIG_HEADERS(include/kdrive-config.h)
 dnl version-config.h covers the version numbers so they can be bumped without
 dnl forcing an entire recompile.x
 AC_CONFIG_HEADERS(include/version-config.h)
@@ -2373,13 +2371,6 @@ XSIXEL_DIRS=
 AM_CONDITIONAL(KDRIVE, [test x$KDRIVE = xyes])
 
 if test "$KDRIVE" = yes; then
-    AC_DEFINE(KDRIVESERVER,1,[Build Kdrive X server])
-    AC_DEFINE(KDRIVEDDXACTIONS,,[Build kdrive ddx])
-
-    if test "x$KDRIVE_EVDEV" = xyes; then
-       AC_DEFINE(KDRIVE_EVDEV, 1, [Enable KDrive evdev driver])
-    fi
-
     AC_CHECK_HEADERS([sixel.h])
     if test x"$ac_cv_header_sixel_h" = xyes && test "x$XSIXEL" = xauto; then
        XSIXEL=yes
@@ -2419,7 +2410,7 @@ if test "$KDRIVE" = yes; then
     KDRIVE_OS_INC='-I$(top_srcdir)/hw/kdrive/linux'
     KDRIVE_INCS="$KDRIVE_PURE_INCS $KDRIVE_OS_INC"
     
-    KDRIVE_CFLAGS="$XSERVER_CFLAGS -DHAVE_KDRIVE_CONFIG_H"
+    KDRIVE_CFLAGS="$XSERVER_CFLAGS"
 
     KDRIVE_PURE_LIBS="$FB_LIB $MI_LIB $FIXES_LIB $XEXT_LIB $DBE_LIB $RECORD_LIB $GLX_LIBS $RANDR_LIB $RENDER_LIB $DAMAGE_LIB $DRI3_LIB $PRESENT_LIB $MIEXT_SYNC_LIB $MIEXT_DAMAGE_LIB $MIEXT_SHADOW_LIB $XI_LIB $XKB_LIB $XKB_STUB_LIB $COMPOSITE_LIB $OS_LIB"
     KDRIVE_LIB='$(top_builddir)/hw/kdrive/src/libkdrive.la'
