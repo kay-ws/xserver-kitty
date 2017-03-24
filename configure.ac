@@ -1501,9 +1501,6 @@ XKB_STUB_LIB='$(top_builddir)/xkb/libxkbstubs.la'
 REQUIRED_MODULES="$REQUIRED_MODULES xkbfile"
 
 PKG_CHECK_MODULES([XDMCP], [xdmcp], [have_libxdmcp="yes"], [have_libxdmcp="no"])
-if test "x$have_libxdmcp" = xyes; then
-	AC_CHECK_LIB(Xdmcp, XdmcpWrap, [have_xdmcpwrap="yes"], [have_xdmcpwrap="no"], [$XDMCP_LIBS])
-fi
 if test "x$XDMCP" = xauto; then
 	if test "x$have_libxdmcp" = xyes; then
 		XDMCP=yes
@@ -1512,7 +1509,7 @@ if test "x$XDMCP" = xauto; then
 	fi
 fi
 if test "x$XDMAUTH" = xauto; then
-	if test "x$have_libxdmcp" = xyes && test "x$have_xdmcpwrap" = xyes; then
+	if test "x$have_libxdmcp" = xyes; then
 		XDMAUTH=yes
 	else
 		XDMAUTH=no
