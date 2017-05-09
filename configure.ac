@@ -667,7 +667,6 @@ case $host_os in
 		XF86UTILS=no
 		XF86VIDMODE=no
 		XSELINUX=no
-		XV=no
 		SYMBOL_VISIBILITY=no
 		;;
 	darwin*)
@@ -2199,7 +2198,6 @@ AM_CONDITIONAL(XWIN_CLIPBOARD, [test "x$XWIN" = xyes])
 AM_CONDITIONAL(XWIN_GLX_WINDOWS, [test "x$XWIN" = xyes && test "x$GLX" = xyes])
 AM_CONDITIONAL(XWIN_WINDOWS_DRI, [test "x$XWIN" = xyes && test "x$WINDOWSDRI" = xyes])
 AM_CONDITIONAL(XWIN_RANDR, [test "x$XWIN" = xyes])
-AM_CONDITIONAL(XWIN_XV, [test "x$XWIN" = xyes && test "x$XV" = xyes])
 
 dnl Darwin / OS X DDX
 if test "x$XQUARTZ" = xyes; then
