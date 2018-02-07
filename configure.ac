@@ -2321,7 +2321,7 @@ if test "$KDRIVE" = yes; then
        XSIXEL_INCS="${SIXEL_CFLAGS} ${XSERVER_CFLAGS}"
     fi
 
-    XEPHYR_REQUIRED_LIBS="xau xdmcp xcb xcb-shape xcb-render xcb-renderutil xcb-aux xcb-image xcb-icccm xcb-shm >= 1.9 xcb-keysyms xcb-randr xcb-xkb"
+    XEPHYR_REQUIRED_LIBS="xau xdmcp xcb xcb-shape xcb-render xcb-renderutil xcb-aux xcb-image xcb-icccm xcb-shm >= 1.9.3 xcb-keysyms xcb-randr xcb-xkb"
     if test "x$XV" = xyes; then
         XEPHYR_REQUIRED_LIBS="$XEPHYR_REQUIRED_LIBS xcb-xv"
     fi
