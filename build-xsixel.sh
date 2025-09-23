@@ -1,10 +1,9 @@
 #!/bin/sh
 
 prefix=/usr/local
-x11prefix=/usr
+x11prefix=/opt/X11
 
-env SIXEL=yes ACLOCAL="aclocal -I ${x11prefix}/share/aclocal" PKG_CONFIG_PATH="${prefix}/lib/pkgconfig:${x11prefix}/lib/pkgconfig" CFLAGS="-O3 -Ofast" \
-./autogen.sh \
+SIXEL=yes ACLOCAL="aclocal -I ${x11prefix}/share/aclocal" PKG_CONFIG_PATH="${prefix}/lib/pkgconfig:${x11prefix}/lib/pkgconfig" CFLAGS="-O3" ./autogen.sh \
     --prefix=${prefix} \
     --with-xkb-path=${x11prefix}/share/X11/xkb \
     --with-xkb-bin-directory=${x11prefix}/bin \
