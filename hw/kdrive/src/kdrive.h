@@ -288,6 +288,7 @@ extern DevPrivateKeyRec kdScreenPrivateKeyRec;
 #define kdScreenPrivateKey (&kdScreenPrivateKeyRec)
 
 extern Bool kdEmulateMiddleButton;
+extern Bool kdRawPointerCoordinates;
 extern Bool kdDisableZaphod;
 
 #define KdGetScreenPriv(pScreen) ((KdPrivScreenPtr) \

@@ -231,7 +231,7 @@ OsInit(void)
 #endif
 
 #if !defined(XQUARTZ)    /* STDIN is already /dev/null and STDOUT/STDERR is managed by console_redirect.c */
-        /* 
+        /*
          * If a write of zero bytes to stderr returns non-zero, i.e. -1,
          * then writing to stderr failed, and we'll write somewhere else
          * instead. (Apparently this never happens in the Real World.)

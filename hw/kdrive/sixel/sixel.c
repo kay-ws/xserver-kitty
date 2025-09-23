@@ -25,9 +25,7 @@
  *    - jaymz
  *
  */
-#ifdef HAVE_CONFIG_H
-#include "kdrive-config.h"
-#endif
+#include "xorg-server.h"
 #include "kdrive.h"
 #include <sixel.h>
 #include <termios.h>
@@ -395,7 +393,21 @@ static int SIXEL_Flip(SIXEL_Driver *driver)
 #if USE_MUTEX
     pthread_mutex_lock(&sixel_mutex);
 #endif
-    memcpy(driver->bitmap, driver->buffer, driver->h * driver->w * 3);
+    {
+        int x, y;
+        unsigned char *dst3 = driver->bitmap;
+        for (y = 0; y < driver->h; ++y) {
+            unsigned char *src32 = driver->buffer + y * driver->pitch;
+            for (x = 0; x < driver->w; ++x) {
+                unsigned char b = src32[0];
+                unsigned char g = src32[1];
+                unsigned char r = src32[2];
+                dst3[0] = r; dst3[1] = g; dst3[2] = b;
+                src32 += 4;
+                dst3  += 3;
+            }
+        }
+    }
     printf("\033[%d;%dH", start_row, start_col);
     sixel_encode(driver->bitmap, driver->w, driver->h, 3, driver->dither, driver->output);
 #if USE_MUTEX
@@ -451,15 +463,16 @@ static void SIXEL_UpdateRects(SIXEL_Driver *driver, int numrects, pixman_box16_t
         box.x1 = (start_col - 1) * cell_width;
         box.y2 = min((box.y2 / cell_height + 1) * cell_height, driver->h);
         box.x2 = min((box.x2 / cell_width + 1) * cell_width, driver->w);
-        if (box.x1 == 0 && box.x2 == driver->w) {
-            dst = driver->bitmap;
-            src = driver->buffer + box.y1 * driver->w * 3;
-            memcpy(dst, src, (box.y2 - box.y1) * driver->w * 3);
-        } else {
-            for (y = box.y1; y < box.y2; ++y) {
-                dst = driver->bitmap + (y - box.y1) * (box.x2 - box.x1) * 3;
-                src = driver->buffer + y * driver->w * 3 + box.x1 * 3;
-                memcpy(dst, src, (box.x2 - box.x1) * 3);
+        for (y = box.y1; y < box.y2; ++y) {
+            unsigned char *src32 = driver->buffer + y * driver->pitch + box.x1 * 4;
+            dst = driver->bitmap + (y - box.y1) * (box.x2 - box.x1) * 3;
+            int x;
+            for (x = box.x1; x < box.x2; ++x) {
+                unsigned char b = src32[0];
+                unsigned char g = src32[1];
+                unsigned char r = src32[2];
+                *dst++ = r; *dst++ = g; *dst++ = b;
+                src32 += 4;
             }
         }
         printf("\033[%d;%dH", start_row, start_col);
@@ -491,10 +504,9 @@ static Bool sixelMapFramebuffer(KdScreenInfo *screen)
     SIXEL_Driver *driver = screen->driver;
     KdPointerMatrix m;
 
-    if (driver->randr != RR_Rotate_0)
-        driver->shadow = TRUE;
-    else
-        driver->shadow = FALSE;
+    /* Always use a shadow framebuffer managed by KDrive/fb (32bpp).
+     * We convert to RGB for SIXEL in the update path. */
+    driver->shadow = TRUE;
 
     KdComputePointerMatrix (&m, driver->randr, screen->width, screen->height);
 
@@ -505,18 +517,9 @@ static Bool sixelMapFramebuffer(KdScreenInfo *screen)
 
     TRACE2("%s: shadow %d\n", __func__, driver->shadow);
 
-    if (driver->shadow)
-    {
-        if (!KdShadowFbAlloc (screen,
-                              driver->randr & (RR_Rotate_90|RR_Rotate_270)))
-            return FALSE;
-    }
-    else
-    {
-        screen->fb.byteStride = driver->pitch;
-        screen->fb.pixelStride = driver->w;
-        screen->fb.frameBuffer = (CARD8 *) (driver->buffer);
-    }
+    if (!KdShadowFbAlloc(screen,
+                         driver->randr & (RR_Rotate_90|RR_Rotate_270)))
+        return FALSE;
 
     return TRUE;
 }
@@ -568,9 +571,13 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
         screen->width = 640;
         screen->height = 480;
     }
-//    if (!screen->fb.depth) {
-        screen->fb.depth = 24;
-//    }
+    /* Force a sane default pixel format (depth 24, bpp 32, XRGB8888). */
+    screen->fb.depth = 24;
+    screen->fb.bitsPerPixel = 32;
+    screen->fb.visuals = (1 << TrueColor);
+    screen->fb.redMask   = 0x00ff0000;
+    screen->fb.greenMask = 0x0000ff00;
+    screen->fb.blueMask  = 0x000000ff;
 
     driver = g_driver = calloc(1, sizeof(SIXEL_Driver));
 
@@ -579,11 +586,14 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
     driver->output = sixel_output_create(sixel_write, stdout);
     driver->dither = sixel_dither_get(BUILTIN_XTERM256);
 
-    driver->buffer = calloc(1, 3 * screen->width * screen->height);
+    /* 32bpp shadow destination buffer for shadowUpdatePacked */
+    driver->pitch = screen->width * 4;
+    driver->buffer = calloc(1, driver->pitch * screen->height);
     if (!driver->buffer) {
         printf("Couldn't allocate buffer for requested mode\n");
         return FALSE;
     }
+    /* 3-bytes-per-pixel RGB staging buffer for SIXEL encoder */
     driver->bitmap = calloc(1, 3 * screen->width * screen->height);
     if (!driver->bitmap) {
         printf("Couldn't allocate buffer for requested mode\n");
@@ -597,7 +607,7 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
     driver->pixel_h = 0;
     driver->cell_w = 0;
     driver->cell_h = 0;
-    driver->pitch = screen->width * 3;
+    /* driver->pitch used by shadow window refers to 32bpp buffer stride */
 
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws);
     driver->pixel_w = ws.ws_xpixel;
@@ -617,11 +627,12 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
 
     TRACE3("Set %dx%d/%dbpp mode\n", driver->w, driver->h, screen->fb.depth);
 
-    screen->fb.visuals = (1 << 4);
-    screen->fb.redMask = 0x0000ff;
-    screen->fb.greenMask = 0x00ff00;
-    screen->fb.blueMask = 0xff0000;
-    screen->fb.bitsPerPixel = screen->fb.depth;
+    /* Keep visuals/masks/bpp consistent with XRGB8888 */
+    screen->fb.visuals = (1 << TrueColor);
+    screen->fb.redMask = 0x00ff0000;
+    screen->fb.greenMask = 0x0000ff00;
+    screen->fb.blueMask = 0x000000ff;
+    screen->fb.bitsPerPixel = 32;
 #if 0
     screen->fb.shadow = FALSE;
 #endif
@@ -943,10 +954,22 @@ void InitInput(int argc, char **argv)
     KdAddKeyboardDriver(&sixelKeyboardDriver);
     KdAddPointerDriver(&sixelMouseDriver);
 
-    ki = KdParseKeyboard("keyboard");
-    KdAddKeyboard(ki);
-    pi = KdParsePointer("mouse");
-    KdAddPointer(pi);
+    ki = KdNewKeyboard();
+    if (ki) {
+        ki->name = strdup("KDrive Keyboard");
+        ki->driverPrivate = strdup("keyboard");
+        KdAddKeyboard(ki);
+    }
+    pi = KdNewPointer();
+    if (pi) {
+        pi->name = strdup("KDrive Pointer");
+        pi->driverPrivate = strdup("mouse");
+        pi->nButtons = 5;
+        pi->inputClass = KD_MOUSE;
+        pi->emulateMiddleButton = kdEmulateMiddleButton;
+        pi->transformCoordinates = !kdRawPointerCoordinates;
+        KdAddPointer(pi);
+    }
 
     KdInitInput();
 }
@@ -1248,16 +1271,24 @@ sixelBell(int volume, int pitch, int duration)
 void CloseInput(void)
 {
     KdCloseInput();
+    sixelFini();
 }
 
-KdOsFuncs sixelOsFuncs = {
-    .Init = sixelInit,
-    .Fini = sixelFini,
-    .pollEvents = sixelPollInput,
-    .Bell = sixelBell,
-};
-
-void OsVendorInit (void)
+static void sixelNotifyFd(int fd, int ready, void *data)
 {
-    KdOsInit (&sixelOsFuncs);
+    (void)fd; (void)ready; (void)data;
+    sixelPollInput();
+}
+
+void OsVendorInit(void)
+{
+    /* Initialize terminal + sixel, then hook stdin for input */
+    sixelInit();
+    SetNotifyFd(STDIN_FILENO, sixelNotifyFd, X_NOTIFY_READ, NULL);
+}
+
+/* Input thread hook (may be called by os/inputthread.c) */
+void ddxInputThreadInit(void)
+{
+    /* Nothing special needed for sixel */
 }
