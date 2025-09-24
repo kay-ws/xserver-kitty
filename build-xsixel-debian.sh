@@ -1,6 +1,20 @@
 #!/bin/sh
 
-SIXEL=yes CFLAGS="-Wno-array-bounds -O3" ./configure \
+sudo apt install -y libsixel-dev \
+                    libchafa-dev \
+                    libglib2.0-dev \
+                    libpixman-1-dev \
+                    xserver-xorg-dev \
+                    xkb-data \
+                    x11-xkb-utils
+
+# Regenerate autotools files to pick up Makefile.am changes
+autoreconf -fi || exit 1
+
+SIXEL=yes CFLAGS="-Wno-array-bounds -O3" LDFLAGS="-Wl,--no-as-needed" ./configure \
+    --with-xkb-path=/usr/share/X11/xkb \
+    --with-xkb-bin-directory=/usr/bin \
+    --with-default-font-path="built-ins" \
     --enable-debug \
     --disable-xorg \
     --disable-dmx \
@@ -35,5 +49,5 @@ SIXEL=yes CFLAGS="-Wno-array-bounds -O3" ./configure \
     --disable-kdrive-mouse \
     --disable-kdrive-evdev \
 
-nice -n19 make -j8
+make -j$(nproc)
 #make install
