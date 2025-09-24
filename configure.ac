@@ -69,6 +69,8 @@ dnl xwin-config.h covers the XWin DDX.
 AC_CONFIG_HEADERS(include/xwin-config.h)
 dnl xwayland-config.h covers Xwayland.
 AC_CONFIG_HEADERS(include/xwayland-config.h)
+dnl sixel-config.h covers the Xsixel DDX.
+AC_CONFIG_HEADERS(include/sixel-config.h)
 dnl version-config.h covers the version numbers so they can be bumped without
 dnl forcing an entire recompile.x
 AC_CONFIG_HEADERS(include/version-config.h)
@@ -2271,20 +2273,70 @@ XEPHYR_INCS=
 XSIXEL_LIBS=
 XSIXEL_INCS=
 XSIXEL_DIRS=
+CHAFA_LIBS=
+CHAFA_INCS=
 
 AM_CONDITIONAL(KDRIVE, [test x$KDRIVE = xyes])
 
 if test "$KDRIVE" = yes; then
-    AC_CHECK_HEADERS([sixel.h])
-    if test x"$ac_cv_header_sixel_h" = xyes && test "x$XSIXEL" = xauto; then
-       XSIXEL=yes
+    dnl Renderer options
+    AC_ARG_WITH([libsixel], AS_HELP_STRING([--with-libsixel], [Use libsixel for rendering (default: auto)]),
+        [WITH_LIBSIXEL=$withval], [WITH_LIBSIXEL=auto])
+    AC_ARG_WITH([chafa], AS_HELP_STRING([--with-chafa], [Use libchafa for rendering (default: auto)]),
+        [WITH_CHAFA=$withval], [WITH_CHAFA=auto])
+
+    dnl Detect available renderer backends for Xsixel
+    HAVE_XSIXEL_BACKEND=no
+
+    dnl libsixel (optional)
+    if test x"$WITH_LIBSIXEL" != xno; then
+        PKG_CHECK_MODULES([SIXEL], [libsixel], [
+            XSIXEL_LIBS="${SIXEL_LIBS}"
+            XSIXEL_INCS="${SIXEL_CFLAGS} ${XSERVER_CFLAGS}"
+            AC_DEFINE([HAVE_LIBSIXEL], 1, [Have libsixel for Xsixel])
+            HAVE_XSIXEL_BACKEND=yes
+            WITH_LIBSIXEL=yes
+        ], [
+            if test x"$WITH_LIBSIXEL" = xyes; then
+                AC_MSG_ERROR([libsixel requested but not found])
+            fi
+            WITH_LIBSIXEL=no
+        ])
     fi
 
-    if test x"$XSIXEL" = xyes; then
-       AC_DEFINE(XSIXELSERVER, 1, [Build Xsixel server])
-       PKG_CHECK_MODULES([SIXEL], [libsixel])
-       XSIXEL_LIBS="${SIXEL_LIBS}"
-       XSIXEL_INCS="${SIXEL_CFLAGS} ${XSERVER_CFLAGS}"
+    dnl chafa (optional)
+    if test x"$WITH_CHAFA" != xno; then
+        PKG_CHECK_MODULES([CHAFA], [chafa], [
+            CHAFA_LIBS="${CHAFA_LIBS}"
+            CHAFA_INCS="${CHAFA_CFLAGS} ${XSERVER_CFLAGS}"
+            AC_DEFINE([HAVE_CHAFA], 1, [Have libchafa for Xsixel])
+            HAVE_XSIXEL_BACKEND=yes
+            WITH_CHAFA=yes
+        ], [
+            if test x"$WITH_CHAFA" = xyes; then
+                AC_MSG_ERROR([libchafa requested but not found])
+            fi
+            WITH_CHAFA=no
+        ])
+    fi
+
+    dnl Decide whether to build Xsixel and enforce --enable-xsixel policy
+    BUILD_XSIXEL=no
+    case "x$XSIXEL" in
+        xyes)
+            if test x"$HAVE_XSIXEL_BACKEND" != xyes; then
+                AC_MSG_ERROR([--enable-xsixel requested but no renderer backend found (need libsixel and/or chafa)])
+            fi
+            BUILD_XSIXEL=yes
+            ;;
+        xauto)
+            if test x"$HAVE_XSIXEL_BACKEND" = xyes; then
+                BUILD_XSIXEL=yes
+            fi
+            ;;
+    esac
+    if test x"$BUILD_XSIXEL" = xyes; then
+        AC_DEFINE(XSIXELSERVER, 1, [Build Xsixel server])
     fi
 
     XEPHYR_REQUIRED_LIBS="xau xdmcp xcb xcb-shape xcb-render xcb-renderutil xcb-aux xcb-image xcb-icccm xcb-shm >= 1.9.3 xcb-keysyms xcb-randr xcb-xkb"
@@ -2328,6 +2380,8 @@ if test "$KDRIVE" = yes; then
     AC_SUBST([XEPHYR_INCS])
     AC_SUBST([XSIXEL_LIBS])
     AC_SUBST([XSIXEL_INCS])
+    AC_SUBST([CHAFA_LIBS])
+    AC_SUBST([CHAFA_INCS])
 fi
 AC_SUBST([KDRIVE_INCS])
 AC_SUBST([KDRIVE_PURE_INCS])
@@ -2336,7 +2390,7 @@ AC_SUBST([KDRIVE_PURE_LIBS])
 AC_SUBST([KDRIVE_MAIN_LIB])
 AC_SUBST([KDRIVE_LOCAL_LIBS])
 AC_SUBST([KDRIVE_LIBS])
-AM_CONDITIONAL(XSIXELSERVER, [test "x$XSIXEL" = xyes])
+AM_CONDITIONAL(XSIXELSERVER, [test "x$BUILD_XSIXEL" = xyes])
 AM_CONDITIONAL(XEPHYR, [test "x$KDRIVE" = xyes && test "x$XEPHYR" = xyes])
 
 dnl Xwayland DDX
