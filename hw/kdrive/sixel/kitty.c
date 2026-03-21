@@ -429,7 +429,7 @@ kitty_send_frame(KITTY_Driver *driver)
         int more = (offset + chunk < b64_len) ? 1 : 0;
 
         if (first) {
-            printf("\033_Ga=T,f=24,s=%d,v=%d,m=%d;", driver->w, driver->h, more);
+            printf("\033_Ga=T,f=24,q=2,s=%d,v=%d,m=%d;", driver->w, driver->h, more);
             first = 0;
         } else {
             printf("\033_Gm=%d;", more);
