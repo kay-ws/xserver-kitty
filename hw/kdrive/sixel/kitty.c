@@ -861,7 +861,7 @@ static Status kittyKeyboardInit(KdKeyboardInfo *ki)
     free(ki->xkbRules);
     free(ki->xkbModel);
     free(ki->xkbLayout);
-    ki->name = strdup("mlterm keyboard");
+    ki->name = strdup("Kitty terminal keyboard");
     ki->xkbRules = strdup("evdev");
     ki->xkbModel = strdup("pc105");
     ki->xkbLayout = strdup("us");
@@ -890,7 +890,7 @@ static void kittyKeyboardBell(KdKeyboardInfo *ki, int volume, int frequency, int
 static Status kittyMouseInit(KdPointerInfo *pi)
 {
     pi->nButtons = 7;
-    pi->name = strdup("Android touchscreen and stylus");
+    pi->name = strdup("Kitty terminal mouse");
     kittyPointer = pi;
     TRACE1("kittyMouseInit() %p\n", pi);
     return Success;
@@ -1203,6 +1203,8 @@ static void kittyFini(void)
 
     if (g_driver) {
         free(g_driver->base64_buf);
+        free(g_driver->bitmap);
+        free(g_driver->buffer);
         free(g_driver);
     }
 }
