@@ -652,7 +652,7 @@ static Bool kittyScreenInit(KdScreenInfo *screen)
     screen->fb.bitsPerPixel = 32;
     /* Keep shadow enabled so KDrive issues shadow updates */
     screen->fb.shadow = TRUE;
-    screen->rate = 8;  /* 60 is too intense for CPU */
+    screen->rate = 30;
 
     printf("\033]1;Freedesktop.org X server on Kitty Graphics\007");
     return kittyMapFramebuffer(screen);
