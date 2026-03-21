@@ -37,6 +37,7 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #undef USE_DECMOUSE
 #undef USE_FILTER_RECTANGLE
@@ -154,6 +155,8 @@ typedef struct
     /* Kitty Graphics protocol */
     char *base64_buf;        /* base64 output buffer */
     size_t base64_buf_size;  /* allocated size */
+    unsigned char *zlib_buf; /* zlib compressed output buffer */
+    size_t zlib_buf_size;    /* allocated size */
 } KITTY_Driver;
 
 static KITTY_Driver *g_driver = NULL;
@@ -418,7 +421,24 @@ static void
 kitty_send_frame(KITTY_Driver *driver)
 {
     int rgb_size = driver->w * driver->h * 3;
-    size_t b64_len = base64_encode(driver->base64_buf, driver->bitmap, rgb_size);
+
+    /* zlib compress the RGB data */
+    uLongf compressed_size = driver->zlib_buf_size;
+    int zret = compress2(driver->zlib_buf, &compressed_size,
+                         driver->bitmap, rgb_size, Z_BEST_SPEED);
+    if (zret != Z_OK) {
+        fprintf(stderr, "[kitty] compress2 failed: %d (buf_size=%zu, rgb=%d)\n",
+                zret, driver->zlib_buf_size, rgb_size);
+        return;
+    }
+
+    fprintf(stderr, "[kitty] frame: rgb=%d zlib=%lu ratio=%.1f%%\n",
+            rgb_size, (unsigned long)compressed_size,
+            100.0 * compressed_size / rgb_size);
+
+    size_t b64_len = base64_encode(driver->base64_buf,
+                                   (unsigned char *)driver->zlib_buf,
+                                   compressed_size);
 
     size_t offset = 0;
     int first = 1;
@@ -429,7 +449,7 @@ kitty_send_frame(KITTY_Driver *driver)
         int more = (offset + chunk < b64_len) ? 1 : 0;
 
         if (first) {
-            printf("\033_Ga=T,f=24,q=2,s=%d,v=%d,m=%d;", driver->w, driver->h, more);
+            printf("\033_Ga=T,i=1,f=24,o=z,q=2,s=%d,v=%d,m=%d;", driver->w, driver->h, more);
             first = 0;
         } else {
             printf("\033_Gm=%d;", more);
@@ -598,7 +618,20 @@ static Bool kittyScreenInit(KdScreenInfo *screen)
         return FALSE;
     }
 
-    driver->base64_buf_size = ((driver->w * driver->h * 3 + 2) / 3) * 4 + 1;
+    /* zlib output buffer: compressBound gives worst-case compressed size */
+    {
+        uLong rgb_size = driver->w * driver->h * 3;
+        driver->zlib_buf_size = compressBound(rgb_size);
+        driver->zlib_buf = malloc(driver->zlib_buf_size);
+        if (!driver->zlib_buf) {
+            fprintf(stderr, "KITTY: failed to allocate zlib buffer (%zu bytes)\n",
+                    driver->zlib_buf_size);
+            return FALSE;
+        }
+    }
+
+    /* base64 buffer sized for worst-case zlib output */
+    driver->base64_buf_size = ((driver->zlib_buf_size + 2) / 3) * 4 + 1;
     driver->base64_buf = malloc(driver->base64_buf_size);
     if (!driver->base64_buf) {
         fprintf(stderr, "KITTY: failed to allocate base64 buffer (%zu bytes)\n",
@@ -1202,6 +1235,7 @@ static void kittyFini(void)
     tty_restore();
 
     if (g_driver) {
+        free(g_driver->zlib_buf);
         free(g_driver->base64_buf);
         free(g_driver->bitmap);
         free(g_driver->buffer);
