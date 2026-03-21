@@ -27,21 +27,7 @@
  */
 #include "xorg-server.h"
 #include "sixel-config.h"
-#ifdef HAVE_CHAFA
-#include <chafa.h>
-/* Ensure we use a non-premultiplied BGRA format; fallback aliases for older API names */
-#ifndef CHAFA_PIXEL_BGRA8_UNASSOCIATED
-#  ifdef CHAFA_PIXEL_BGRA8_UNPREMULTIPLIED
-#    define CHAFA_PIXEL_BGRA8_UNASSOCIATED CHAFA_PIXEL_BGRA8_UNPREMULTIPLIED
-#  else
-#    define CHAFA_PIXEL_BGRA8_UNASSOCIATED CHAFA_PIXEL_BGRA8_PREMULTIPLIED
-#  endif
-#endif
-#endif
 #include "kdrive.h"
-#ifdef HAVE_LIBSIXEL
-#include <sixel.h>
-#endif
 #include <termios.h>
 #include <X11/keysym.h>
 #include <sys/wait.h>
@@ -53,34 +39,34 @@
 #include <unistd.h>
 
 #define USE_DECMOUSE 1
-#define USE_FILTER_RECTANGLE 1
+#undef USE_FILTER_RECTANGLE
 
-static void sixelFini(void);
-static Bool sixelScreenInit(KdScreenInfo *screen);
-static Bool sixelFinishInitScreen(ScreenPtr pScreen);
-static Bool sixelCreateRes(ScreenPtr pScreen);
-static Bool sixelMapFramebuffer(KdScreenInfo *screen);
+static void kittyFini(void);
+static Bool kittyScreenInit(KdScreenInfo *screen);
+static Bool kittyFinishInitScreen(ScreenPtr pScreen);
+static Bool kittyCreateRes(ScreenPtr pScreen);
+static Bool kittyMapFramebuffer(KdScreenInfo *screen);
 
-static void sixelKeyboardFini(KdKeyboardInfo *ki);
-static Status sixelKeyboardInit(KdKeyboardInfo *ki);
-static Status sixelKeyboardEnable(KdKeyboardInfo *ki);
-static void sixelKeyboardDisable(KdKeyboardInfo *ki);
-static void sixelKeyboardLeds(KdKeyboardInfo *ki, int leds);
-static void sixelKeyboardBell(KdKeyboardInfo *ki, int volume, int frequency, int duration);
+static void kittyKeyboardFini(KdKeyboardInfo *ki);
+static Status kittyKeyboardInit(KdKeyboardInfo *ki);
+static Status kittyKeyboardEnable(KdKeyboardInfo *ki);
+static void kittyKeyboardDisable(KdKeyboardInfo *ki);
+static void kittyKeyboardLeds(KdKeyboardInfo *ki, int leds);
+static void kittyKeyboardBell(KdKeyboardInfo *ki, int volume, int frequency, int duration);
 
-static Bool sixelMouseInit(KdPointerInfo *pi);
-static void sixelMouseFini(KdPointerInfo *pi);
-static Status sixelMouseEnable(KdPointerInfo *pi);
-static void sixelMouseDisable(KdPointerInfo *pi);
+static Bool kittyMouseInit(KdPointerInfo *pi);
+static void kittyMouseFini(KdPointerInfo *pi);
+static Status kittyMouseEnable(KdPointerInfo *pi);
+static void kittyMouseDisable(KdPointerInfo *pi);
 
-KdKeyboardInfo *sixelKeyboard = NULL;
-KdPointerInfo *sixelPointer = NULL;
+KdKeyboardInfo *kittyKeyboard = NULL;
+KdPointerInfo *kittyPointer = NULL;
 #if USE_MUTEX
-pthread_mutex_t sixel_mutex;
+pthread_mutex_t kitty_mutex;
 #endif
 
-/* Debug tracing (disabled by default). Define XSIXEL_TRACE to enable. */
-#ifdef XSIXEL_TRACE
+/* Debug tracing (disabled by default). Define XKITTY_TRACE to enable. */
+#ifdef XKITTY_TRACE
 #include <stdio.h>
 #define TRACE(s) fprintf(stderr, s)
 #define TRACE1(s, a1) fprintf(stderr, s, a1)
@@ -97,29 +83,29 @@ pthread_mutex_t sixel_mutex;
 #define TRACE5(s,a1,a2,a3,a4,a5) do{}while(0)
 #endif
 
-KdKeyboardDriver sixelKeyboardDriver = {
+KdKeyboardDriver kittyKeyboardDriver = {
     .name = "keyboard",
-    .Init = sixelKeyboardInit,
-    .Fini = sixelKeyboardFini,
-    .Enable = sixelKeyboardEnable,
-    .Disable = sixelKeyboardDisable,
-    .Leds = sixelKeyboardLeds,
-    .Bell = sixelKeyboardBell,
+    .Init = kittyKeyboardInit,
+    .Fini = kittyKeyboardFini,
+    .Enable = kittyKeyboardEnable,
+    .Disable = kittyKeyboardDisable,
+    .Leds = kittyKeyboardLeds,
+    .Bell = kittyKeyboardBell,
 };
 
-KdPointerDriver sixelMouseDriver = {
+KdPointerDriver kittyMouseDriver = {
     .name = "mouse",
-    .Init = sixelMouseInit,
-    .Fini = sixelMouseFini,
-    .Enable = sixelMouseEnable,
-    .Disable = sixelMouseDisable,
+    .Init = kittyMouseInit,
+    .Fini = kittyMouseFini,
+    .Enable = kittyMouseEnable,
+    .Disable = kittyMouseDisable,
 };
 
 
-KdCardFuncs sixelFuncs = {
-    .scrinit = sixelScreenInit,    /* scrinit */
-    .finishInitScreen = sixelFinishInitScreen, /* finishInitScreen */
-    .createRes = sixelCreateRes,    /* createRes */
+KdCardFuncs kittyFuncs = {
+    .scrinit = kittyScreenInit,    /* scrinit */
+    .finishInitScreen = kittyFinishInitScreen, /* finishInitScreen */
+    .createRes = kittyCreateRes,    /* createRes */
 };
 
 int mouseState = 0;
@@ -137,53 +123,37 @@ typedef struct
     Bool shadow;
     unsigned char *buffer;
     unsigned char *bitmap;
-    /* libsixel backend */
-#ifdef HAVE_LIBSIXEL
-    sixel_dither_t *dither;
-    sixel_output_t *output;
-#endif
-    /* chafa backend */
-#ifdef HAVE_CHAFA
-    ChafaCanvasConfig *chafa_cfg;
-    ChafaCanvas *chafa_canvas;
-    ChafaTermInfo *chafa_tinfo;
-#endif
-} SIXEL_Driver;
+    /* Kitty Graphics protocol */
+    char *base64_buf;        /* base64 output buffer */
+    size_t base64_buf_size;  /* allocated size */
+} KITTY_Driver;
 
-static SIXEL_Driver *g_driver = NULL;
+static KITTY_Driver *g_driver = NULL;
 
-typedef enum {
-    RENDERER_DEFAULT = 0,
-    RENDERER_CHAFA,
-    RENDERER_LIBSIXEL
-} sixel_renderer_t;
-
-static sixel_renderer_t g_renderer = RENDERER_DEFAULT;
-
-#define SIXEL_UP                (1 << 12 | ('A' - '@'))
-#define SIXEL_DOWN              (1 << 12 | ('B' - '@'))
-#define SIXEL_RIGHT             (1 << 12 | ('C' - '@'))
-#define SIXEL_LEFT              (1 << 12 | ('D' - '@'))
-#define SIXEL_END               (1 << 12 | ('F' - '@'))
-#define SIXEL_HOME              (1 << 12 | ('H' - '@'))
-#define SIXEL_FOCUSIN           (1 << 12 | ('I' - '@'))
-#define SIXEL_FOCUSOUT          (1 << 12 | ('O' - '@'))
-#define SIXEL_F1                (1 << 12 | ('P' - '@'))
-#define SIXEL_F2                (1 << 12 | ('Q' - '@'))
-#define SIXEL_F3                (1 << 12 | ('R' - '@'))
-#define SIXEL_F4                (1 << 12 | ('S' - '@'))
-#define SIXEL_FKEYS             (1 << 12 | ('~' - '@'))
-#define SIXEL_MOUSE_SGR         (1 << 12 | ('<' - ';') << 4 << 6 | ('M' - '@'))
-#define SIXEL_MOUSE_SGR_RELEASE (1 << 12 | ('<' - ';') << 4 << 6 | ('m' - '@'))
-#define SIXEL_MOUSE_DEC         (1 << 12 | ('&' - 0x1f) << 6 | ('w' - '@'))
-#define SIXEL_DTTERM_SEQS       (1 << 12 | ('t' - '@'))
-#define SIXEL_UNKNOWN           (513)
+#define KITTY_UP                (1 << 12 | ('A' - '@'))
+#define KITTY_DOWN              (1 << 12 | ('B' - '@'))
+#define KITTY_RIGHT             (1 << 12 | ('C' - '@'))
+#define KITTY_LEFT              (1 << 12 | ('D' - '@'))
+#define KITTY_END               (1 << 12 | ('F' - '@'))
+#define KITTY_HOME              (1 << 12 | ('H' - '@'))
+#define KITTY_FOCUSIN           (1 << 12 | ('I' - '@'))
+#define KITTY_FOCUSOUT          (1 << 12 | ('O' - '@'))
+#define KITTY_F1                (1 << 12 | ('P' - '@'))
+#define KITTY_F2                (1 << 12 | ('Q' - '@'))
+#define KITTY_F3                (1 << 12 | ('R' - '@'))
+#define KITTY_F4                (1 << 12 | ('S' - '@'))
+#define KITTY_FKEYS             (1 << 12 | ('~' - '@'))
+#define KITTY_MOUSE_SGR         (1 << 12 | ('<' - ';') << 4 << 6 | ('M' - '@'))
+#define KITTY_MOUSE_SGR_RELEASE (1 << 12 | ('<' - ';') << 4 << 6 | ('m' - '@'))
+#define KITTY_MOUSE_DEC         (1 << 12 | ('&' - 0x1f) << 6 | ('w' - '@'))
+#define KITTY_DTTERM_SEQS       (1 << 12 | ('t' - '@'))
+#define KITTY_UNKNOWN           (513)
 
 typedef struct _key {
     int params[256];
     int nparams;
     int value;
-} sixel_key_t;
+} kitty_key_t;
 
 enum _state {
     STATE_GROUND = 0,
@@ -205,7 +175,7 @@ static int get_input(char *buf, int size) {
     return 0;
 }
 
-static int getkeys(char *buf, int nread, sixel_key_t *keys)
+static int getkeys(char *buf, int nread, kitty_key_t *keys)
 {
     int i, c;
     int size = 0;
@@ -323,13 +293,13 @@ static int SendModifierKey(int state, uint8_t press_state)
     int posted = 0;
 
     if (state & 1) {
-        KdEnqueueKeyboardEvent(sixelKeyboard, 42+8, press_state);
+        KdEnqueueKeyboardEvent(kittyKeyboard, 42+8, press_state);
     }
     if (state & 2) {
-        KdEnqueueKeyboardEvent(sixelKeyboard, 56+8, press_state);
+        KdEnqueueKeyboardEvent(kittyKeyboard, 56+8, press_state);
     }
     if (state & 4) {
-        KdEnqueueKeyboardEvent(sixelKeyboard, 29+8, press_state);
+        KdEnqueueKeyboardEvent(kittyKeyboard, 29+8, press_state);
     }
 
     return posted;
@@ -414,211 +384,27 @@ static void tty_restore(void)
     tcsetattr(fileno(stdin), TCSADRAIN, &orig_termios);
 }
 
-static int SIXEL_Flip(SIXEL_Driver *driver)
+static int KITTY_Flip(KITTY_Driver *driver)
 {
-    int start_row = 1;
-    int start_col = 1;
-
-#if USE_MUTEX
-    pthread_mutex_lock(&sixel_mutex);
-#endif
-#ifdef HAVE_LIBSIXEL
-    if (g_renderer == RENDERER_LIBSIXEL) {
-        int x, y;
-        unsigned char *dst3 = driver->bitmap;
-        for (y = 0; y < driver->h; ++y) {
-            unsigned char *src32 = driver->buffer + y * driver->pitch;
-            for (x = 0; x < driver->w; ++x) {
-                unsigned char b = src32[0];
-                unsigned char g = src32[1];
-                unsigned char r = src32[2];
-                dst3[0] = r; dst3[1] = g; dst3[2] = b;
-                src32 += 4;
-                dst3  += 3;
-            }
-        }
-    printf("\033[%d;%dH", start_row, start_col);
-printf("\033]2;Filp;start_row: %d, start_col: %d, driver->w: %d, driver->h: %d, driver->pitch: %d\007", start_row, start_col, driver->w, driver->h, driver->pitch);
-        sixel_encode(driver->bitmap, driver->w, driver->h, 3, driver->dither, driver->output);
-    }
-#endif
-#ifdef HAVE_CHAFA
-    if (g_renderer == RENDERER_CHAFA) {
-        /* Convert 32bpp XRGB to packed RGB8 to avoid alpha issues */
-        int x, y;
-        unsigned char *dst3 = driver->bitmap;
-        for (y = 0; y < driver->h; ++y) {
-            unsigned char *src32 = driver->buffer + y * driver->pitch;
-            for (x = 0; x < driver->w; ++x) {
-                unsigned char b = src32[0];
-                unsigned char g = src32[1];
-                unsigned char r = src32[2];
-                dst3[0] = r; dst3[1] = g; dst3[2] = b;
-                src32 += 4;
-                dst3  += 3;
-            }
-        }
-        chafa_canvas_config_set_cell_geometry(driver->chafa_cfg,
-                                              driver->pixel_w / driver->cell_w,
-                                              driver->pixel_h / driver->cell_h);
-        chafa_canvas_config_set_geometry(driver->chafa_cfg,
-                                         driver->cell_w,
-                                         driver->cell_h);
-        driver->chafa_canvas = chafa_canvas_new(g_driver->chafa_cfg);
-
-        chafa_canvas_draw_all_pixels(driver->chafa_canvas,
-                                     CHAFA_PIXEL_RGB8,
-                                     driver->bitmap,
-                                     driver->w,
-                                     driver->h,
-                                     driver->w * 3);
-        GString *s = chafa_canvas_print(driver->chafa_canvas, driver->chafa_tinfo);
-        if (s) {
-            printf("\033[H");
-            fwrite(s->str, 1, s->len, stdout);
-            g_string_free(s, TRUE);
-        }
-        chafa_canvas_unref(driver->chafa_canvas);
-        driver->chafa_canvas = NULL;
-    }
-#endif
-#if USE_MUTEX
-    pthread_mutex_unlock(&sixel_mutex);
-#endif
-
+    /* TODO: implement Kitty Graphics rendering */
+    (void)driver;
     return 0;
 }
 
 
-static void SIXEL_UpdateRects(SIXEL_Driver *driver, int numrects, pixman_box16_t *rects)
+static void KITTY_UpdateRects(KITTY_Driver *driver, int numrects, pixman_box16_t *rects)
 {
-    int start_row = 1, start_col = 1;
-    int cell_height = 0, cell_width = 0;
-    int i, y;
-    unsigned char *dst;
-#if SIXEL_VIDEO_DEBUG
-    static int frames = 0;
-    char *format;
-#endif
-    pixman_box16_t box;
-
-    box.x1 = 65535;
-    box.y1 = 65535;
-    box.x2 = 0;
-    box.y2 = 0;
-
-    if (driver->cell_h != 0 && driver->pixel_h != 0) {
-#if USE_MUTEX
-        pthread_mutex_lock(&sixel_mutex);
-#endif
-#ifdef HAVE_CHAFA
-        if (g_renderer == RENDERER_CHAFA) {
-            /* Convert 32bpp XRGB to packed RGB8 to avoid alpha issues */
-            int x, y;
-            unsigned char *dst3 = driver->bitmap;
-            for (y = 0; y < driver->h; ++y) {
-                unsigned char *src32 = driver->buffer + y * driver->pitch;
-                for (x = 0; x < driver->w; ++x) {
-                    unsigned char b = src32[0];
-                    unsigned char g = src32[1];
-                    unsigned char r = src32[2];
-                    dst3[0] = r; dst3[1] = g; dst3[2] = b;
-                    src32 += 4;
-                    dst3  += 3;
-                }
-            }
-            cell_height = driver->pixel_h / driver->cell_h;
-            cell_width = driver->pixel_w / driver->cell_w;
-            chafa_canvas_config_set_cell_geometry(driver->chafa_cfg,
-                                                  driver->pixel_w / driver->cell_w,
-                                                  driver->pixel_h / driver->cell_h);
-            chafa_canvas_config_set_geometry(driver->chafa_cfg,
-                                             driver->cell_w,
-                                             driver->cell_h);
-            driver->chafa_canvas = chafa_canvas_new(g_driver->chafa_cfg);
-            chafa_canvas_draw_all_pixels(driver->chafa_canvas,
-                                         CHAFA_PIXEL_RGB8,
-                                         driver->bitmap,
-                                         driver->w,
-                                         driver->h,
-                                         driver->w * 3);
-            GString *s = chafa_canvas_print(driver->chafa_canvas, driver->chafa_tinfo);
-            if (s) {
-                printf("\033[H");
-                fwrite(s->str, 1, s->len, stdout);
-                g_string_free(s, TRUE);
-            }
-            chafa_canvas_unref(driver->chafa_canvas);
-            driver->chafa_canvas = NULL;
-        }
-#endif
-#ifdef HAVE_LIBSIXEL
-        if (g_renderer == RENDERER_LIBSIXEL) {
-            for (i = 0; i < numrects; ++i, ++rects) {
-                if (rects->x1 < box.x1) {
-                    box.x1 = rects->x1;
-                }
-                if (rects->y1 < box.y1) {
-                    box.y1 = rects->y1;
-                }
-                if (rects->x2 > box.x2) {
-                    box.x2 = rects->x2;
-                }
-                if (rects->y2 > box.y2) {
-                    box.y2 = rects->y2;
-                }
-            }
-            start_row = 1;
-            start_col = 1;
-            cell_height = driver->pixel_h / driver->cell_h;
-            cell_width = driver->pixel_w / driver->cell_w;
-            start_row += box.y1 / cell_height;
-            start_col += box.x1 / cell_width;
-            box.y1 = (start_row - 1) * cell_height;
-            box.x1 = (start_col - 1) * cell_width;
-            box.y2 = min((box.y2 / cell_height + 1) * cell_height, driver->h);
-            box.x2 = min((box.x2 / cell_width + 1) * cell_width, driver->w);
-            for (y = box.y1; y < box.y2; ++y) {
-                unsigned char *src32 = driver->buffer + y * driver->pitch + box.x1 * 4;
-                dst = driver->bitmap + (y - box.y1) * (box.x2 - box.x1) * 3;
-                int x;
-                for (x = box.x1; x < box.x2; ++x) {
-                    unsigned char b = src32[0];
-                    unsigned char g = src32[1];
-                    unsigned char r = src32[2];
-                    *dst++ = r; *dst++ = g; *dst++ = b;
-                    src32 += 4;
-                }
-            }
-            printf("\033[%d;%dH", start_row, start_col);
-            sixel_encode(driver->bitmap,
-                         (box.x2 - box.x1),
-                         (box.y2 - box.y1),
-                         3,
-                         driver->dither,
-                         driver->output);
-        }
-#endif
-#if SIXEL_VIDEO_DEBUG
-        format = "\033[100;1Hframes: %05d, x: %04d, y: %04d, w: %04d, h: %04d";
-        printf(format, ++frames,
-               box.x1, box.y2,
-               box.x2 - box.x1,
-               box.y2 - box.y1);
-#endif
-#if USE_MUTEX
-        pthread_mutex_unlock(&sixel_mutex);
-#endif
-    } else {
-        SIXEL_Flip(driver);
-    }
+    /* TODO: implement Kitty Graphics rendering */
+    (void)numrects;
+    (void)rects;
+    KITTY_Flip(driver);
     fflush(stdout);
 }
 
 
-static Bool sixelMapFramebuffer(KdScreenInfo *screen)
+static Bool kittyMapFramebuffer(KdScreenInfo *screen)
 {
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
     KdPointerMatrix m;
 
     /* Always use a shadow framebuffer managed by KDrive/fb (32bpp).
@@ -642,11 +428,11 @@ static Bool sixelMapFramebuffer(KdScreenInfo *screen)
 }
 
 static void
-sixelSetScreenSizes(ScreenPtr pScreen)
+kittySetScreenSizes(ScreenPtr pScreen)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
 
     if (driver->randr & (RR_Rotate_0|RR_Rotate_180))
     {
@@ -665,20 +451,15 @@ sixelSetScreenSizes(ScreenPtr pScreen)
 }
 
 static Bool
-sixelUnmapFramebuffer(KdScreenInfo *screen)
+kittyUnmapFramebuffer(KdScreenInfo *screen)
 {
     KdShadowFbFree (screen);
     return TRUE;
 }
 
-static int sixel_write(char *data, int size, void *priv)
+static Bool kittyScreenInit(KdScreenInfo *screen)
 {
-    return fwrite(data, 1, size, (FILE *)priv);
-}
-
-static Bool sixelScreenInit(KdScreenInfo *screen)
-{
-    SIXEL_Driver *driver;
+    KITTY_Driver *driver;
     struct winsize ws;
 
     TRACE1("%s\n", __func__);
@@ -696,7 +477,7 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
     screen->fb.greenMask = 0x0000ff00;
     screen->fb.blueMask  = 0x000000ff;
 
-    driver = g_driver = calloc(1, sizeof(SIXEL_Driver));
+    driver = g_driver = calloc(1, sizeof(KITTY_Driver));
 
     TRACE3("Attempting for %dx%d/%dbpp mode\n",
            screen->width, screen->height, screen->fb.depth);
@@ -716,38 +497,13 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
     driver->cell_w = ws.ws_col;
     driver->cell_h = ws.ws_row;
 
-    /* require dtterm response (SIXEL_DTTERM_SEQS) */
+    /* require dtterm response (KITTY_DTTERM_SEQS) */
     if (driver->cell_w <= 0 || driver->cell_h <= 0) {
         printf("\033[18t");
     }
     if (driver->pixel_w <= 0 || driver->pixel_h <= 0) {
         printf("\033[14t");
     }
-
-    /* Select default renderer if not set explicitly */
-#if defined(HAVE_LIBSIXEL)
-    if (g_renderer == RENDERER_DEFAULT)
-        g_renderer = RENDERER_LIBSIXEL;
-#elif defined(HAVE_CHAFA)
-    if (g_renderer == RENDERER_DEFAULT)
-        g_renderer = RENDERER_CHAFA;
-#endif
-
-#ifdef HAVE_CHAFA
-    if (g_renderer == RENDERER_CHAFA) {
-        driver->chafa_cfg = chafa_canvas_config_new();
-        chafa_canvas_config_set_pixel_mode(driver->chafa_cfg, CHAFA_PIXEL_MODE_SIXELS);
-        chafa_canvas_config_set_canvas_mode(driver->chafa_cfg, CHAFA_CANVAS_MODE_TRUECOLOR);
-        driver->chafa_tinfo = NULL;
-    }
-#endif
-
-#ifdef HAVE_LIBSIXEL
-    if (g_renderer == RENDERER_LIBSIXEL) {
-        driver->output = sixel_output_create(sixel_write, stdout);
-        driver->dither = sixel_dither_get(BUILTIN_XTERM256);
-    }
-#endif
 
     /* 32bpp shadow destination buffer for shadowUpdatePacked */
     driver->pitch = screen->width * 4;
@@ -756,7 +512,7 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
         printf("Couldn't allocate buffer for requested mode\n");
         return FALSE;
     }
-    /* 3-bytes-per-pixel RGB staging buffer for SIXEL encoder */
+    /* 3-bytes-per-pixel RGB staging buffer for Kitty Graphics encoder */
     driver->bitmap = calloc(1, 3 * screen->width * screen->height);
     if (!driver->bitmap) {
         printf("Couldn't allocate buffer for requested mode\n");
@@ -778,15 +534,15 @@ static Bool sixelScreenInit(KdScreenInfo *screen)
     screen->fb.shadow = TRUE;
     screen->rate = 8;  /* 60 is too intense for CPU */
 
-    printf("\033]1;Freedesktop.org X server on SIXEL\007");
-    return sixelMapFramebuffer(screen);
+    printf("\033]1;Freedesktop.org X server on Kitty Graphics\007");
+    return kittyMapFramebuffer(screen);
 }
 
-static void sixelShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
+static void kittyShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
     pixman_box16_t * rects;
     int amount, i;
     int updateRectsPixelCount = 0;
@@ -809,20 +565,20 @@ static void sixelShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
      * there will be performance hit instead of optimization.
      */
     if (amount > NUMRECTS || updateRectsPixelCount * 3 > driver->w * driver->h) {
-        SIXEL_Flip(driver);
+        KITTY_Flip(driver);
     } else {
-        SIXEL_UpdateRects(driver, amount, rects);
+        KITTY_UpdateRects(driver, amount, rects);
     }
 #else
-    SIXEL_UpdateRects(driver, amount, rects);
+    KITTY_UpdateRects(driver, amount, rects);
 #endif
 }
 
-static void *sixelShadowWindow(ScreenPtr pScreen, CARD32 row, CARD32 offset, int mode, CARD32 *size, void *closure)
+static void *kittyShadowWindow(ScreenPtr pScreen, CARD32 row, CARD32 offset, int mode, CARD32 *size, void *closure)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
 
     if (!pScreenPriv->enabled) {
         return NULL;
@@ -836,11 +592,11 @@ static void *sixelShadowWindow(ScreenPtr pScreen, CARD32 row, CARD32 offset, int
 }
 
 
-static Bool sixelCreateRes(ScreenPtr pScreen)
+static Bool kittyCreateRes(ScreenPtr pScreen)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
 
     TRACE1("%s\n", __func__);
 
@@ -849,18 +605,18 @@ static Bool sixelCreateRes(ScreenPtr pScreen)
      * and does not call update callback if shadow flag is not set.
      */
     screen->fb.shadow = TRUE;
-    KdShadowSet(pScreen, driver->randr, sixelShadowUpdate, sixelShadowWindow);
+    KdShadowSet(pScreen, driver->randr, kittyShadowUpdate, kittyShadowWindow);
 
     return TRUE;
 }
 
 
 #ifdef RANDR
-static Bool sixelRandRGetInfo(ScreenPtr pScreen, Rotation *rotations)
+static Bool kittyRandRGetInfo(ScreenPtr pScreen, Rotation *rotations)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
     RRScreenSizePtr pSize;
     Rotation randr;
     int n;
@@ -889,16 +645,16 @@ static Bool sixelRandRGetInfo(ScreenPtr pScreen, Rotation *rotations)
     return TRUE;
 }
 
-static Bool sixelRandRSetConfig(ScreenPtr pScreen,
+static Bool kittyRandRSetConfig(ScreenPtr pScreen,
                                 Rotation randr,
                                 int rate,
                                 RRScreenSizePtr pSize)
 {
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
-    SIXEL_Driver *driver = screen->driver;
+    KITTY_Driver *driver = screen->driver;
     Bool wasEnabled = pScreenPriv->enabled;
-    SIXEL_Driver oldDriver;
+    KITTY_Driver oldDriver;
     int oldwidth;
     int oldheight;
     int oldmmwidth;
@@ -923,19 +679,19 @@ static Bool sixelRandRSetConfig(ScreenPtr pScreen,
 
     TRACE2("%s driver->randr %d", __func__, driver->randr);
 
-    sixelUnmapFramebuffer(screen);
+    kittyUnmapFramebuffer(screen);
 
-    if (!sixelMapFramebuffer(screen)) {
+    if (!kittyMapFramebuffer(screen)) {
         goto bail4;
     }
 
     KdShadowUnset(screen->pScreen);
 
-    if (!sixelCreateRes(screen->pScreen)) {
+    if (!kittyCreateRes(screen->pScreen)) {
         goto bail4;
     }
 
-    sixelSetScreenSizes(screen->pScreen);
+    kittySetScreenSizes(screen->pScreen);
 
     /*
      * Set frame buffer mapping
@@ -958,9 +714,9 @@ static Bool sixelRandRSetConfig(ScreenPtr pScreen,
     return TRUE;
 
 bail4:
-    sixelUnmapFramebuffer(screen);
+    kittyUnmapFramebuffer(screen);
     *driver = oldDriver;
-    (void) sixelMapFramebuffer(screen);
+    (void) kittyMapFramebuffer(screen);
     pScreen->width = oldwidth;
     pScreen->height = oldheight;
     pScreen->mmWidth = oldmmwidth;
@@ -972,7 +728,7 @@ bail4:
     return FALSE;
 }
 
-static Bool sixelRandRInit(ScreenPtr pScreen)
+static Bool kittyRandRInit(ScreenPtr pScreen)
 {
     rrScrPrivPtr pScrPriv;
 
@@ -983,34 +739,34 @@ static Bool sixelRandRInit(ScreenPtr pScreen)
     }
 
     pScrPriv = rrGetScrPriv(pScreen);
-    pScrPriv->rrGetInfo = sixelRandRGetInfo;
-    pScrPriv->rrSetConfig = sixelRandRSetConfig;
+    pScrPriv->rrGetInfo = kittyRandRGetInfo;
+    pScrPriv->rrSetConfig = kittyRandRSetConfig;
     return TRUE;
 }
 #endif
 
 
-static Bool sixelFinishInitScreen(ScreenPtr pScreen)
+static Bool kittyFinishInitScreen(ScreenPtr pScreen)
 {
     if (!shadowSetup(pScreen)) {
         return FALSE;
     }
 
 #ifdef RANDR
-    if (!sixelRandRInit(pScreen)) {
+    if (!kittyRandRInit(pScreen)) {
         return FALSE;
     }
 #endif
     return TRUE;
 }
 
-static void sixelKeyboardFini(KdKeyboardInfo *ki)
+static void kittyKeyboardFini(KdKeyboardInfo *ki)
 {
-    TRACE1("sixelKeyboardFini() %p\n", ki);
-    sixelKeyboard = NULL;
+    TRACE1("kittyKeyboardFini() %p\n", ki);
+    kittyKeyboard = NULL;
 }
 
-static Status sixelKeyboardInit(KdKeyboardInfo *ki)
+static Status kittyKeyboardInit(KdKeyboardInfo *ki)
 {
     ki->minScanCode = 8;
     ki->maxScanCode = 255;
@@ -1022,50 +778,50 @@ static Status sixelKeyboardInit(KdKeyboardInfo *ki)
     ki->xkbRules = strdup("evdev");
     ki->xkbModel = strdup("pc105");
     ki->xkbLayout = strdup("us");
-    sixelKeyboard = ki;
-    TRACE1("sixelKeyboardInit() %p\n", ki);
+    kittyKeyboard = ki;
+    TRACE1("kittyKeyboardInit() %p\n", ki);
     return Success;
 }
 
-static Status sixelKeyboardEnable(KdKeyboardInfo *ki)
+static Status kittyKeyboardEnable(KdKeyboardInfo *ki)
 {
     return Success;
 }
 
-static void sixelKeyboardDisable(KdKeyboardInfo *ki)
+static void kittyKeyboardDisable(KdKeyboardInfo *ki)
 {
 }
 
-static void sixelKeyboardLeds(KdKeyboardInfo *ki, int leds)
+static void kittyKeyboardLeds(KdKeyboardInfo *ki, int leds)
 {
 }
 
-static void sixelKeyboardBell(KdKeyboardInfo *ki, int volume, int frequency, int duration)
+static void kittyKeyboardBell(KdKeyboardInfo *ki, int volume, int frequency, int duration)
 {
 }
 
-static Status sixelMouseInit(KdPointerInfo *pi)
+static Status kittyMouseInit(KdPointerInfo *pi)
 {
     pi->nButtons = 7;
     pi->name = strdup("Android touchscreen and stylus");
-    sixelPointer = pi;
-    TRACE1("sixelMouseInit() %p\n", pi);
+    kittyPointer = pi;
+    TRACE1("kittyMouseInit() %p\n", pi);
     return Success;
 }
 
-static void sixelMouseFini(KdPointerInfo *pi)
+static void kittyMouseFini(KdPointerInfo *pi)
 {
-    TRACE1("sixelMouseFini() %p\n", pi);
-    sixelPointer = NULL;
+    TRACE1("kittyMouseFini() %p\n", pi);
+    kittyPointer = NULL;
 }
 
-static Status sixelMouseEnable(KdPointerInfo *pi)
+static Status kittyMouseEnable(KdPointerInfo *pi)
 {
     /* TODO */
     return Success;
 }
 
-static void sixelMouseDisable(KdPointerInfo *pi)
+static void kittyMouseDisable(KdPointerInfo *pi)
 {
     /* TODO */
     return;
@@ -1073,7 +829,7 @@ static void sixelMouseDisable(KdPointerInfo *pi)
 
 void InitCard(char *name)
 {
-    KdCardInfoAdd(&sixelFuncs,  0);
+    KdCardInfoAdd(&kittyFuncs,  0);
     TRACE1("InitCard: %s\n", name);
 }
 
@@ -1089,8 +845,8 @@ void InitInput(int argc, char **argv)
     KdPointerInfo *pi;
     KdKeyboardInfo *ki;
 
-    KdAddKeyboardDriver(&sixelKeyboardDriver);
-    KdAddPointerDriver(&sixelMouseDriver);
+    KdAddKeyboardDriver(&kittyKeyboardDriver);
+    KdAddPointerDriver(&kittyMouseDriver);
 
     ki = KdNewKeyboard();
     if (ki) {
@@ -1121,48 +877,26 @@ void ddxBeforeReset(void)
 void ddxUseMsg(void)
 {
     KdUseMsg();
-    ErrorF("-backend {chafa|libsixel}  Choose renderer backend (default: libsixel if built)\n");
 }
 
 int ddxProcessArgument(int argc, char **argv, int i)
 {
-    if (!strcmp(argv[i], "-backend")) {
-        if (i + 1 >= argc) {
-            UseMsg();
-            return 0;
-        }
-#ifdef HAVE_CHAFA
-        else if (!strcmp(argv[i + 1], "chafa")) {
-            g_renderer = RENDERER_CHAFA;
-        }
-#endif
-#ifdef HAVE_LIBSIXEL
-        else if (!strcmp(argv[i + 1], "libsixel")) {
-            g_renderer = RENDERER_LIBSIXEL;
-        }
-#endif
-        else {
-            UseMsg();
-            return 0;
-        }
-        return 2;
-    }
     return KdProcessArgument(argc, argv, i);
 }
 
-static void sixelPollInput(void)
+static void kittyPollInput(void)
 {
     int posted = 0;
     static int prev_x = -1, prev_y = -1;
     static int mouse_x = -1, mouse_y = -1;
     static int mouse_button = 0;
-#if SIXEL_DEBUG
+#if KITTY_DEBUG
     static int events = 0;
 #endif
     char buf[4096];
-    static sixel_key_t keys[4096];
+    static kitty_key_t keys[4096];
     int scancode;
-    sixel_key_t *key;
+    kitty_key_t *key;
     int nread, nkeys;
     int i;
     int state;
@@ -1176,7 +910,7 @@ static void sixelPollInput(void)
         for (i = 0; i < nkeys; ++i) {
             key = keys + i;
             switch (key->value) {
-            case SIXEL_DTTERM_SEQS:
+            case KITTY_DTTERM_SEQS:
                 if (g_driver) {
                     switch (key->params[0]) {
                     case 4:
@@ -1193,7 +927,7 @@ static void sixelPollInput(void)
                 }
                 break;
 
-            case SIXEL_MOUSE_DEC:
+            case KITTY_MOUSE_DEC:
                 if (key->nparams >= 4) {
                     mouse_y = key->params[2];
                     mouse_x = key->params[3];
@@ -1204,42 +938,42 @@ static void sixelPollInput(void)
                         if (!(mouse_button & 1)) {
                             mouseState |= KD_BUTTON_1;
                             mouse_button |= 1;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
                         }
                         break;
                     case 3:
                         //if (mouse_button & 1) {
                             mouseState &= ~KD_BUTTON_1;
                             mouse_button = 0;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
                         //}
                         break;
                     case 4:
                         if (!(mouse_button & 2)) {
                             mouseState |= KD_BUTTON_2;
                             mouse_button |= 2;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
                         }
                         break;
                     case 5:
                         //if (mouse_button & 2) {
                             mouseState &= ~KD_BUTTON_2;
                             mouse_button = 0;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
                         //}
                         break;
                     case 6:
                         if (!(mouse_button & 4)) {
                             mouseState |= KD_BUTTON_3;
                             mouse_button |= 4;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
                         }
                         break;
                     case 7:
                         //if (mouse_button & 4) {
                             mouseState &= ~KD_BUTTON_3;
                             mouse_button = 0;
-                            KdEnqueuePointerEvent(sixelPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
+                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
                         //}
                         break;
                     case 10:
@@ -1262,7 +996,7 @@ static void sixelPollInput(void)
                 fflush(stdout);
                 break;
 
-            case SIXEL_FKEYS:
+            case KITTY_FKEYS:
                 /* TODO: modifyFunctionKeys */
                 switch (key->params[0]) {
                 case 2:  scancode = 110+8; break;
@@ -1291,35 +1025,35 @@ static void sixelPollInput(void)
                     key->params[1]--;
                     SendModifierKey(key->params[1], 0);
                 }
-                KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 0);
+                KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 0);
                 if (key->nparams == 2) {
                     SendModifierKey(key->params[1], 1);
                 }
-                KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 1);
+                KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 1);
                 break;
-            case SIXEL_FOCUSIN:
-                SIXEL_Flip(g_driver);
+            case KITTY_FOCUSIN:
+                KITTY_Flip(g_driver);
                 break;
-            case SIXEL_FOCUSOUT:
+            case KITTY_FOCUSOUT:
                 /* TODO: */
-                /* SIXEL_Flip(g_driver); */
+                /* KITTY_Flip(g_driver); */
                 break;
             default:
-                if ((key->value >= SIXEL_UP && key->value <= SIXEL_LEFT) ||
-                    (key->value >= SIXEL_END && key->value <= SIXEL_HOME) ||
-                    (key->value >= SIXEL_F1 && key->value <= SIXEL_F4)) {
+                if ((key->value >= KITTY_UP && key->value <= KITTY_LEFT) ||
+                    (key->value >= KITTY_END && key->value <= KITTY_HOME) ||
+                    (key->value >= KITTY_F1 && key->value <= KITTY_F4)) {
                     /* TODO: modifyCursorKeys, modifyOtherKeys */
                     switch(key->value) {
-                    case SIXEL_UP:    scancode = 103+8; break;
-                    case SIXEL_DOWN:  scancode = 108+8; break;
-                    case SIXEL_RIGHT: scancode = 106+8; break;
-                    case SIXEL_LEFT:  scancode = 105+8; break;
-                    case SIXEL_HOME:  scancode = 102+8; break;
-                    case SIXEL_END:   scancode = 107+8; break;
-                    case SIXEL_F1:    scancode =  59+8; break;
-                    case SIXEL_F2:    scancode =  60+8; break;
-                    case SIXEL_F3:    scancode =  61+8; break;
-                    case SIXEL_F4:    scancode =  62+8; break;
+                    case KITTY_UP:    scancode = 103+8; break;
+                    case KITTY_DOWN:  scancode = 108+8; break;
+                    case KITTY_RIGHT: scancode = 106+8; break;
+                    case KITTY_LEFT:  scancode = 105+8; break;
+                    case KITTY_HOME:  scancode = 102+8; break;
+                    case KITTY_END:   scancode = 107+8; break;
+                    case KITTY_F1:    scancode =  59+8; break;
+                    case KITTY_F2:    scancode =  60+8; break;
+                    case KITTY_F3:    scancode =  61+8; break;
+                    case KITTY_F4:    scancode =  62+8; break;
                     default:
                         scancode = 0;
                         break;
@@ -1328,11 +1062,11 @@ static void sixelPollInput(void)
                         key->params[key->nparams-1]--;
                         posted += SendModifierKey(key->params[key->nparams-1], 0);
                     }
-                    KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 0);
+                    KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 0);
                     if (key->nparams >= 1) {
                         posted += SendModifierKey(key->params[key->nparams-1], 1);
                     }
-                    KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 1);
+                    KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 1);
                 }
                 else {
                     state = GetState(key->value);
@@ -1340,13 +1074,13 @@ static void sixelPollInput(void)
                     if (state) {
                         SendModifierKey(state, 0);
                     }
-                    KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 0);
+                    KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 0);
                     if (state) {
                         SendModifierKey(state, 1);
                     }
-                    KdEnqueueKeyboardEvent(sixelKeyboard, scancode, 1);
+                    KdEnqueueKeyboardEvent(kittyKeyboard, scancode, 1);
                     if (key->value == 0x0c) {
-                        SIXEL_Flip(g_driver);
+                        KITTY_Flip(g_driver);
                     }
                 }
                 break;
@@ -1354,13 +1088,13 @@ static void sixelPollInput(void)
         }
     }
     if (prev_x != mouse_x || prev_y != mouse_y) {
-        KdEnqueuePointerEvent(sixelPointer, mouseState, mouse_x, mouse_y, 0);
+        KdEnqueuePointerEvent(kittyPointer, mouseState, mouse_x, mouse_y, 0);
         prev_x = mouse_x;
         prev_y = mouse_y;
     }
 }
 
-static int sixelInit(void)
+static int kittyInit(void)
 {
     tty_raw();
     printf("\033[H");
@@ -1384,7 +1118,7 @@ static int sixelInit(void)
 }
 
 
-static void sixelFini(void)
+static void kittyFini(void)
 {
     fd_set fdset;
     struct timeval timeout;
@@ -1415,28 +1149,13 @@ static void sixelFini(void)
     tty_restore();
 
     if (g_driver) {
-#ifdef HAVE_CHAFA
-        if (g_driver->chafa_canvas)
-            chafa_canvas_unref(g_driver->chafa_canvas);
-        if (g_driver->chafa_cfg)
-            chafa_canvas_config_unref(g_driver->chafa_cfg);
-        if (g_driver->chafa_tinfo)
-            chafa_term_info_unref(g_driver->chafa_tinfo);
-#endif
-#ifdef HAVE_LIBSIXEL
-        if (g_driver->dither)
-            sixel_dither_unref(g_driver->dither);
-        if (g_driver->output)
-            sixel_output_unref(g_driver->output);
-#endif
-        /* We intentionally skip unref for chafa objects to avoid
-           requiring newer API; process exit will reclaim memory. */
+        free(g_driver->base64_buf);
         free(g_driver);
     }
 }
 
 static void
-sixelBell(int volume, int pitch, int duration)
+kittyBell(int volume, int pitch, int duration)
 {
     if (volume && pitch)
         printf("\007");
@@ -1445,24 +1164,24 @@ sixelBell(int volume, int pitch, int duration)
 void CloseInput(void)
 {
     KdCloseInput();
-    sixelFini();
+    kittyFini();
 }
 
-static void sixelNotifyFd(int fd, int ready, void *data)
+static void kittyNotifyFd(int fd, int ready, void *data)
 {
     (void)fd; (void)ready; (void)data;
-    sixelPollInput();
+    kittyPollInput();
 }
 
 void OsVendorInit(void)
 {
-    /* Initialize terminal + sixel, then hook stdin for input */
-    sixelInit();
-    SetNotifyFd(STDIN_FILENO, sixelNotifyFd, X_NOTIFY_READ, NULL);
+    /* Initialize terminal + kitty, then hook stdin for input */
+    kittyInit();
+    SetNotifyFd(STDIN_FILENO, kittyNotifyFd, X_NOTIFY_READ, NULL);
 }
 
 /* Input thread hook (may be called by os/inputthread.c) */
 void ddxInputThreadInit(void)
 {
-    /* Nothing special needed for sixel */
+    /* Nothing special needed for kitty */
 }

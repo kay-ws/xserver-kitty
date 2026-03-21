@@ -42,3 +42,6 @@ SIXEL=yes CFLAGS="-Wno-array-bounds -O3" LDFLAGS="-Wl,--no-as-needed" ./configur
     --disable-kdrive-evdev \
 
 make -j$(nproc)
+
+echo "=== Build result ==="
+ls -la hw/kdrive/sixel/Xkitty 2>/dev/null && echo "Xkitty binary found" || echo "ERROR: Xkitty binary not found"

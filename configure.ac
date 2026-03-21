@@ -2272,71 +2272,26 @@ XEPHYR_LIBS=
 XEPHYR_INCS=
 XSIXEL_LIBS=
 XSIXEL_INCS=
-XSIXEL_DIRS=
-CHAFA_LIBS=
-CHAFA_INCS=
 
 AM_CONDITIONAL(KDRIVE, [test x$KDRIVE = xyes])
 
 if test "$KDRIVE" = yes; then
-    dnl Renderer options
-    AC_ARG_WITH([libsixel], AS_HELP_STRING([--with-libsixel], [Use libsixel for rendering (default: auto)]),
-        [WITH_LIBSIXEL=$withval], [WITH_LIBSIXEL=auto])
-    AC_ARG_WITH([chafa], AS_HELP_STRING([--with-chafa], [Use libchafa for rendering (default: auto)]),
-        [WITH_CHAFA=$withval], [WITH_CHAFA=auto])
+    dnl Kitty Graphics backend needs no external libraries
+    HAVE_XSIXEL_BACKEND=yes
+    XSIXEL_INCS="${XSERVER_CFLAGS}"
 
-    dnl Detect available renderer backends for Xsixel
-    HAVE_XSIXEL_BACKEND=no
-
-    dnl libsixel (optional)
-    if test x"$WITH_LIBSIXEL" != xno; then
-        PKG_CHECK_MODULES([SIXEL], [libsixel], [
-            XSIXEL_LIBS="${SIXEL_LIBS}"
-            XSIXEL_INCS="${SIXEL_CFLAGS} ${XSERVER_CFLAGS}"
-            AC_DEFINE([HAVE_LIBSIXEL], 1, [Have libsixel for Xsixel])
-            HAVE_XSIXEL_BACKEND=yes
-            WITH_LIBSIXEL=yes
-        ], [
-            if test x"$WITH_LIBSIXEL" = xyes; then
-                AC_MSG_ERROR([libsixel requested but not found])
-            fi
-            WITH_LIBSIXEL=no
-        ])
-    fi
-
-    dnl chafa (optional)
-    if test x"$WITH_CHAFA" != xno; then
-        PKG_CHECK_MODULES([CHAFA], [chafa], [
-            CHAFA_LIBS="${CHAFA_LIBS}"
-            CHAFA_INCS="${CHAFA_CFLAGS} ${XSERVER_CFLAGS}"
-            AC_DEFINE([HAVE_CHAFA], 1, [Have libchafa for Xsixel])
-            HAVE_XSIXEL_BACKEND=yes
-            WITH_CHAFA=yes
-        ], [
-            if test x"$WITH_CHAFA" = xyes; then
-                AC_MSG_ERROR([libchafa requested but not found])
-            fi
-            WITH_CHAFA=no
-        ])
-    fi
-
-    dnl Decide whether to build Xsixel and enforce --enable-xsixel policy
+    dnl Decide whether to build Xkitty and enforce --enable-xsixel policy
     BUILD_XSIXEL=no
     case "x$XSIXEL" in
         xyes)
-            if test x"$HAVE_XSIXEL_BACKEND" != xyes; then
-                AC_MSG_ERROR([--enable-xsixel requested but no renderer backend found (need libsixel and/or chafa)])
-            fi
             BUILD_XSIXEL=yes
             ;;
         xauto)
-            if test x"$HAVE_XSIXEL_BACKEND" = xyes; then
-                BUILD_XSIXEL=yes
-            fi
+            BUILD_XSIXEL=yes
             ;;
     esac
     if test x"$BUILD_XSIXEL" = xyes; then
-        AC_DEFINE(XSIXELSERVER, 1, [Build Xsixel server])
+        AC_DEFINE(XSIXELSERVER, 1, [Build Xkitty server])
     fi
 
     XEPHYR_REQUIRED_LIBS="xau xdmcp xcb xcb-shape xcb-render xcb-renderutil xcb-aux xcb-image xcb-icccm xcb-shm >= 1.9.3 xcb-keysyms xcb-randr xcb-xkb"
@@ -2380,8 +2335,6 @@ if test "$KDRIVE" = yes; then
     AC_SUBST([XEPHYR_INCS])
     AC_SUBST([XSIXEL_LIBS])
     AC_SUBST([XSIXEL_INCS])
-    AC_SUBST([CHAFA_LIBS])
-    AC_SUBST([CHAFA_INCS])
 fi
 AC_SUBST([KDRIVE_INCS])
 AC_SUBST([KDRIVE_PURE_INCS])

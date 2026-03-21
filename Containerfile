@@ -9,9 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xutils-dev \
     xorg-sgml-doctools \
     xfonts-utils \
-    libsixel-dev \
-    libchafa-dev \
-    libglib2.0-dev \
     libpixman-1-dev \
     libssl-dev \
     xserver-xorg-dev \
