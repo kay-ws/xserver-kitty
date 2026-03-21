@@ -83,6 +83,34 @@ pthread_mutex_t kitty_mutex;
 #define TRACE5(s,a1,a2,a3,a4,a5) do{}while(0)
 #endif
 
+static const char base64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static size_t
+base64_encode(char *dst, const unsigned char *src, size_t len)
+{
+    size_t i, j;
+    for (i = 0, j = 0; i + 2 < len; i += 3) {
+        dst[j++] = base64_table[(src[i] >> 2) & 0x3F];
+        dst[j++] = base64_table[((src[i] & 0x3) << 4) | (src[i+1] >> 4)];
+        dst[j++] = base64_table[((src[i+1] & 0xF) << 2) | (src[i+2] >> 6)];
+        dst[j++] = base64_table[src[i+2] & 0x3F];
+    }
+    if (i < len) {
+        dst[j++] = base64_table[(src[i] >> 2) & 0x3F];
+        if (i + 1 < len) {
+            dst[j++] = base64_table[((src[i] & 0x3) << 4) | (src[i+1] >> 4)];
+            dst[j++] = base64_table[(src[i+1] & 0xF) << 2];
+        } else {
+            dst[j++] = base64_table[(src[i] & 0x3) << 4];
+            dst[j++] = '=';
+        }
+        dst[j++] = '=';
+    }
+    dst[j] = '\0';
+    return j;
+}
+
 KdKeyboardDriver kittyKeyboardDriver = {
     .name = "keyboard",
     .Init = kittyKeyboardInit,
@@ -516,6 +544,14 @@ static Bool kittyScreenInit(KdScreenInfo *screen)
     driver->bitmap = calloc(1, 3 * screen->width * screen->height);
     if (!driver->bitmap) {
         printf("Couldn't allocate buffer for requested mode\n");
+        return FALSE;
+    }
+
+    driver->base64_buf_size = ((driver->w * driver->h * 3 + 2) / 3) * 4 + 1;
+    driver->base64_buf = malloc(driver->base64_buf_size);
+    if (!driver->base64_buf) {
+        fprintf(stderr, "KITTY: failed to allocate base64 buffer (%zu bytes)\n",
+                driver->base64_buf_size);
         return FALSE;
     }
 
