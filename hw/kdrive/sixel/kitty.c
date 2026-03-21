@@ -38,7 +38,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#define USE_DECMOUSE 1
+#undef USE_DECMOUSE
 #undef USE_FILTER_RECTANGLE
 
 static void kittyFini(void);
@@ -976,7 +976,6 @@ static void kittyPollInput(void)
     int posted = 0;
     static int prev_x = -1, prev_y = -1;
     static int mouse_x = -1, mouse_y = -1;
-    static int mouse_button = 0;
 #if KITTY_DEBUG
     static int events = 0;
 #endif
@@ -1014,74 +1013,44 @@ static void kittyPollInput(void)
                 }
                 break;
 
-            case KITTY_MOUSE_DEC:
-                if (key->nparams >= 4) {
-                    mouse_y = key->params[2];
-                    mouse_x = key->params[3];
-                    switch (key->params[0]) {
-                    case 1:
-                        break;
-                    case 2:
-                        if (!(mouse_button & 1)) {
-                            mouseState |= KD_BUTTON_1;
-                            mouse_button |= 1;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
-                        }
-                        break;
-                    case 3:
-                        //if (mouse_button & 1) {
-                            mouseState &= ~KD_BUTTON_1;
-                            mouse_button = 0;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
-                        //}
-                        break;
-                    case 4:
-                        if (!(mouse_button & 2)) {
-                            mouseState |= KD_BUTTON_2;
-                            mouse_button |= 2;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
-                        }
-                        break;
-                    case 5:
-                        //if (mouse_button & 2) {
-                            mouseState &= ~KD_BUTTON_2;
-                            mouse_button = 0;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
-                        //}
-                        break;
-                    case 6:
-                        if (!(mouse_button & 4)) {
-                            mouseState |= KD_BUTTON_3;
-                            mouse_button |= 4;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 0);
-                        }
-                        break;
-                    case 7:
-                        //if (mouse_button & 4) {
-                            mouseState &= ~KD_BUTTON_3;
-                            mouse_button = 0;
-                            KdEnqueuePointerEvent(kittyPointer, mouseState|KD_MOUSE_DELTA, 0, 0, 1);
-                        //}
-                        break;
-                    case 10:
-                        break;
-                    case 8:
-                    case 9:
-                    case 32:
-                    case 64:
-                    default:
-                        break;
+            case KITTY_MOUSE_SGR:
+            case KITTY_MOUSE_SGR_RELEASE:
+            {
+                int cb = key->params[0];
+                int px = key->params[1];
+                int py = key->params[2];
+                int is_release = (key->value == KITTY_MOUSE_SGR_RELEASE);
+                int is_motion = (cb & 32);
+                int is_wheel  = (cb & 64);
+                int button    = (cb & 3);
+
+                if (is_wheel) {
+                    /* scroll wheel: button 0=up(KD_BUTTON_4), 1=down(KD_BUTTON_5) */
+                    int btn_flag = (button == 0) ? KD_BUTTON_4 : KD_BUTTON_5;
+                    KdEnqueuePointerEvent(kittyPointer, mouseState | btn_flag, px, py, 0);
+                    KdEnqueuePointerEvent(kittyPointer, mouseState, px, py, 0);
+                } else if (is_motion) {
+                    /* mouse motion */
+                    KdEnqueuePointerEvent(kittyPointer, mouseState, px, py, 0);
+                } else {
+                    /* button press/release */
+                    int btn_flag = 0;
+                    switch (button) {
+                        case 0: btn_flag = KD_BUTTON_1; break;
+                        case 1: btn_flag = KD_BUTTON_2; break;
+                        case 2: btn_flag = KD_BUTTON_3; break;
                     }
-                    mouse_button = key->params[1];
+                    if (is_release) {
+                        mouseState &= ~btn_flag;
+                    } else {
+                        mouseState |= btn_flag;
+                    }
+                    KdEnqueuePointerEvent(kittyPointer, mouseState, px, py, 0);
                 }
-#if USE_FILTER_RECTANGLE
-                printf("\033[1;1'z" "\033[3'{" "\033[1'{");
-                printf("\033['w");
-#else
-                printf("\033['|");
-#endif
-                fflush(stdout);
+                mouse_x = px;
+                mouse_y = py;
                 break;
+            }
 
             case KITTY_FKEYS:
                 /* TODO: modifyFunctionKeys */
@@ -1184,22 +1153,21 @@ static void kittyPollInput(void)
 static int kittyInit(void)
 {
     tty_raw();
-    printf("\033[H");
-    printf("\033[?1004h");
-    printf("\033[?25l");
-    printf("\033[>2p");
-#if USE_DECMOUSE
-    printf("\033[1;1'z" "\033[3'{" "\033[1'{");
-#if USE_FILTER_RECTANGLE
-    printf("\033['w");
-#else
-    printf("\033['|");
-#endif
 
-#else
+    /* alternate screen */
+    printf("\033[?1049h");
+
+    /* カーソル非表示 */
+    printf("\033[?25l");
+
+    /* フォーカスイベント有効化 */
+    printf("\033[?1004h");
+
+    /* SGR mouse: all motion + pixel coordinates */
     printf("\033[?1003h");
-    printf("\033[?1006h");
-#endif
+    printf("\033[?1016h");
+
+    fflush(stdout);
 
     return 0;
 }
@@ -1213,15 +1181,13 @@ static void kittyFini(void)
 
     printf("\033\\");
     fflush(stdout);
-#if USE_DECMOUSE
-    printf("\033[0'z" "\033[2'{" "\033[4'{");
-#else
-    printf("\033[?1006l");
+
+    printf("\033[?1016l");
     printf("\033[?1003l");
-#endif
-    printf("\033[>0p");
-    printf("\033[?25h");
     printf("\033[?1004l");
+    printf("\033[?25h");    /* カーソル表示 */
+    printf("\033[?1049l");  /* alternate screen 復元 */
+    fflush(stdout);
 
     FD_ZERO(&fdset);
     FD_SET(STDIN_FILENO, &fdset);
