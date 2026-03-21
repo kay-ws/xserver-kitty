@@ -412,21 +412,72 @@ static void tty_restore(void)
     tcsetattr(fileno(stdin), TCSADRAIN, &orig_termios);
 }
 
+#define KITTY_CHUNK_SIZE 4096
+
+static void
+kitty_send_frame(KITTY_Driver *driver)
+{
+    int rgb_size = driver->w * driver->h * 3;
+    size_t b64_len = base64_encode(driver->base64_buf, driver->bitmap, rgb_size);
+
+    size_t offset = 0;
+    int first = 1;
+
+    while (offset < b64_len) {
+        size_t remaining = b64_len - offset;
+        size_t chunk = (remaining > KITTY_CHUNK_SIZE) ? KITTY_CHUNK_SIZE : remaining;
+        int more = (offset + chunk < b64_len) ? 1 : 0;
+
+        if (first) {
+            printf("\033_Ga=T,f=24,s=%d,v=%d,m=%d;", driver->w, driver->h, more);
+            first = 0;
+        } else {
+            printf("\033_Gm=%d;", more);
+        }
+
+        fwrite(driver->base64_buf + offset, 1, chunk, stdout);
+        printf("\033\\");
+
+        offset += chunk;
+    }
+    fflush(stdout);
+}
+
 static int KITTY_Flip(KITTY_Driver *driver)
 {
-    /* TODO: implement Kitty Graphics rendering */
-    (void)driver;
+    int x, y;
+    unsigned char *src = driver->buffer;
+    unsigned char *dst = driver->bitmap;
+
+    /* XRGB (32bpp) → RGB (24bpp) conversion
+     * In memory (little-endian): B G R X → extract R, G, B */
+    for (y = 0; y < driver->h; y++) {
+        unsigned char *src_row = src + y * driver->pitch;
+        unsigned char *dst_row = dst + y * driver->w * 3;
+        for (x = 0; x < driver->w; x++) {
+            dst_row[0] = src_row[2]; /* R */
+            dst_row[1] = src_row[1]; /* G */
+            dst_row[2] = src_row[0]; /* B */
+            src_row += 4;
+            dst_row += 3;
+        }
+    }
+
+    /* Move cursor to top-left */
+    printf("\033[H");
+
+    /* Send frame via Kitty Graphics Protocol */
+    kitty_send_frame(driver);
+
     return 0;
 }
 
 
 static void KITTY_UpdateRects(KITTY_Driver *driver, int numrects, pixman_box16_t *rects)
 {
-    /* TODO: implement Kitty Graphics rendering */
     (void)numrects;
     (void)rects;
     KITTY_Flip(driver);
-    fflush(stdout);
 }
 
 
