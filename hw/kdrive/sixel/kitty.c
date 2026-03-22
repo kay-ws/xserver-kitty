@@ -431,9 +431,10 @@ kitty_send_frame_tempfile(KITTY_Driver *driver)
     const unsigned char *data;
     size_t data_size;
 
+    int rgb_size = driver->w * driver->h * 3;
+
     if (kitty_compress) {
         /* zlib compress the RGB data */
-        int rgb_size = driver->w * driver->h * 3;
         uLongf compressed_size = driver->zlib_buf_size;
         int zret = compress2(driver->zlib_buf, &compressed_size,
                              driver->bitmap, rgb_size, Z_BEST_SPEED);
@@ -441,15 +442,11 @@ kitty_send_frame_tempfile(KITTY_Driver *driver)
             fprintf(stderr, "[kitty] compress2 failed: %d\n", zret);
             return;
         }
-        fprintf(stderr, "[kitty] frame: rgb=%d zlib=%lu ratio=%.1f%%\n",
-                rgb_size, (unsigned long)compressed_size,
-                100.0 * compressed_size / rgb_size);
         data = (unsigned char *)driver->zlib_buf;
         data_size = compressed_size;
     } else {
         data = driver->bitmap;
-        data_size = (size_t)driver->w * driver->h * 3;
-        fprintf(stderr, "[kitty] frame: rgb=%zu (uncompressed)\n", data_size);
+        data_size = (size_t)rgb_size;
     }
 
     /* Write data to temp file (single-writer: Xkitty is single-threaded,
