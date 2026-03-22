@@ -137,6 +137,13 @@ KdCardFuncs kittyFuncs = {
     .createRes = kittyCreateRes,    /* createRes */
 };
 
+/* Transfer mode: 1 = tempfile (t=t), 0 = direct/inline (t=d) */
+static int kitty_use_tempfile = 1;
+/* Compression: 1 = zlib (o=z), 0 = raw RGB */
+static int kitty_compress = 1;
+
+#define KITTY_TEMPFILE_PATH "/tmp/xkitty-frame.bin"
+
 int mouseState = 0;
 
 enum { NUMRECTS = 32, FULLSCREEN_REFRESH_TIME = 1000 };
@@ -997,10 +1004,29 @@ void ddxBeforeReset(void)
 void ddxUseMsg(void)
 {
     KdUseMsg();
+    ErrorF("-kitty-transfer t|d   Kitty Graphics transfer mode (default: t=tempfile)\n");
+    ErrorF("-nocompress            Disable zlib compression (send raw RGB)\n");
 }
 
 int ddxProcessArgument(int argc, char **argv, int i)
 {
+    if (!strcmp(argv[i], "-kitty-transfer")) {
+        if (i + 1 < argc) {
+            if (!strcmp(argv[i + 1], "d"))
+                kitty_use_tempfile = 0;
+            else if (!strcmp(argv[i + 1], "t"))
+                kitty_use_tempfile = 1;
+            else
+                UseMsg();
+            return 2;
+        }
+        UseMsg();
+        return 0;
+    }
+    if (!strcmp(argv[i], "-nocompress")) {
+        kitty_compress = 0;
+        return 1;
+    }
     return KdProcessArgument(argc, argv, i);
 }
 
