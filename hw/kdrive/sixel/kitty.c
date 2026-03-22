@@ -564,11 +564,56 @@ static int KITTY_Flip(KITTY_Driver *driver)
 }
 
 
+static void KITTY_FlipRects(KITTY_Driver *driver, int numrects, pixman_box16_t *rects)
+{
+    int i, x, y;
+    unsigned char *src = driver->buffer;
+    unsigned char *dst = driver->bitmap;
+
+    for (i = 0; i < numrects; i++) {
+        int rx1 = rects[i].x1;
+        int ry1 = rects[i].y1;
+        int rx2 = rects[i].x2;
+        int ry2 = rects[i].y2;
+
+        /* Clamp to screen bounds */
+        if (rx1 < 0) rx1 = 0;
+        if (ry1 < 0) ry1 = 0;
+        if (rx2 > driver->w) rx2 = driver->w;
+        if (ry2 > driver->h) ry2 = driver->h;
+        if (rx1 >= rx2 || ry1 >= ry2)
+            continue;
+
+        /* XRGB (32bpp) → RGB (24bpp) conversion for this rect only.
+         * src uses driver->pitch stride (may include alignment padding).
+         * dst uses driver->w * 3 stride (packed RGB, no padding). */
+        for (y = ry1; y < ry2; y++) {
+            unsigned char *src_row = src + y * driver->pitch + rx1 * 4;
+            unsigned char *dst_row = dst + y * driver->w * 3 + rx1 * 3;
+            for (x = rx1; x < rx2; x++) {
+                dst_row[0] = src_row[2]; /* R */
+                dst_row[1] = src_row[1]; /* G */
+                dst_row[2] = src_row[0]; /* B */
+                src_row += 4;
+                dst_row += 3;
+            }
+        }
+    }
+}
+
+
 static void KITTY_UpdateRects(KITTY_Driver *driver, int numrects, pixman_box16_t *rects)
 {
-    (void)numrects;
-    (void)rects;
-    KITTY_Flip(driver);
+    if (numrects == 0)
+        return;
+
+    KITTY_FlipRects(driver, numrects, rects);
+
+    /* Move cursor to top-left */
+    printf("\033[H");
+
+    /* Send full frame via Kitty Graphics Protocol */
+    kitty_send_frame(driver);
 }
 
 
