@@ -734,35 +734,16 @@ static void kittyShadowUpdate(ScreenPtr pScreen, shadowBufPtr pBuf)
     KdScreenPriv(pScreen);
     KdScreenInfo *screen = pScreenPriv->screen;
     KITTY_Driver *driver = screen->driver;
-    pixman_box16_t * rects;
-    int amount, i;
-    int updateRectsPixelCount = 0;
+    pixman_box16_t *rects;
+    int numrects;
 
     if (driver->shadow)
     {
         shadowUpdatePacked(pScreen, pBuf);
     }
 
-    rects = pixman_region_rectangles(&pBuf->pDamage->damage, &amount);
-    for (i = 0; i < amount; i++)
-    {
-        updateRectsPixelCount += (pBuf->pDamage->damage.extents.x2 - pBuf->pDamage->damage.extents.x1) *
-                                 (pBuf->pDamage->damage.extents.y2 - pBuf->pDamage->damage.extents.y1);
-    }
-#if 0
-    /*
-     * Each subrect is copied into temp buffer before uploading to OpenGL texture,
-     * so if total area of pixels copied is more than 1/3 of the whole screen area,
-     * there will be performance hit instead of optimization.
-     */
-    if (amount > NUMRECTS || updateRectsPixelCount * 3 > driver->w * driver->h) {
-        KITTY_Flip(driver);
-    } else {
-        KITTY_UpdateRects(driver, amount, rects);
-    }
-#else
-    KITTY_UpdateRects(driver, amount, rects);
-#endif
+    rects = pixman_region_rectangles(&pBuf->pDamage->damage, &numrects);
+    KITTY_UpdateRects(driver, numrects, rects);
 }
 
 static void *kittyShadowWindow(ScreenPtr pScreen, CARD32 row, CARD32 offset, int mode, CARD32 *size, void *closure)
