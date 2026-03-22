@@ -38,6 +38,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <zlib.h>
+#include <errno.h>
 
 #undef USE_DECMOUSE
 #undef USE_FILTER_RECTANGLE
@@ -425,8 +426,74 @@ static void tty_restore(void)
 #define KITTY_CHUNK_SIZE 4096
 
 static void
+kitty_send_frame_tempfile(KITTY_Driver *driver)
+{
+    const unsigned char *data;
+    size_t data_size;
+
+    if (kitty_compress) {
+        /* zlib compress the RGB data */
+        int rgb_size = driver->w * driver->h * 3;
+        uLongf compressed_size = driver->zlib_buf_size;
+        int zret = compress2(driver->zlib_buf, &compressed_size,
+                             driver->bitmap, rgb_size, Z_BEST_SPEED);
+        if (zret != Z_OK) {
+            fprintf(stderr, "[kitty] compress2 failed: %d\n", zret);
+            return;
+        }
+        fprintf(stderr, "[kitty] frame: rgb=%d zlib=%lu ratio=%.1f%%\n",
+                rgb_size, (unsigned long)compressed_size,
+                100.0 * compressed_size / rgb_size);
+        data = (unsigned char *)driver->zlib_buf;
+        data_size = compressed_size;
+    } else {
+        data = driver->bitmap;
+        data_size = (size_t)driver->w * driver->h * 3;
+        fprintf(stderr, "[kitty] frame: rgb=%zu (uncompressed)\n", data_size);
+    }
+
+    /* Write data to temp file (single-writer: Xkitty is single-threaded,
+     * printf follows fclose, so bcon never reads an incomplete file) */
+    FILE *fp = fopen(KITTY_TEMPFILE_PATH, "wb");
+    if (!fp) {
+        fprintf(stderr, "[kitty] fopen %s failed: %s\n",
+                KITTY_TEMPFILE_PATH, strerror(errno));
+        return;
+    }
+    if (fwrite(data, 1, data_size, fp) != data_size) {
+        fprintf(stderr, "[kitty] fwrite failed: %s\n", strerror(errno));
+        fclose(fp);
+        return;
+    }
+    fclose(fp);
+
+    /* base64 encode the file path */
+    char path_b64[256];
+    base64_encode(path_b64,
+                  (const unsigned char *)KITTY_TEMPFILE_PATH,
+                  strlen(KITTY_TEMPFILE_PATH));
+
+    /* Send Kitty Graphics command with file path only */
+    if (kitty_compress) {
+        printf("\033_Ga=T,i=1,f=24,o=z,q=2,s=%d,v=%d,t=t;%s\033\\",
+               driver->w, driver->h, path_b64);
+    } else {
+        printf("\033_Ga=T,i=1,f=24,q=2,s=%d,v=%d,t=t;%s\033\\",
+               driver->w, driver->h, path_b64);
+    }
+    fflush(stdout);
+}
+
+static void
 kitty_send_frame(KITTY_Driver *driver)
 {
+    /* t=t mode: write to tempfile, send path only */
+    if (kitty_use_tempfile) {
+        kitty_send_frame_tempfile(driver);
+        return;
+    }
+
+    /* t=d mode: existing inline base64 transfer */
     int rgb_size = driver->w * driver->h * 3;
 
     /* zlib compress the RGB data */
