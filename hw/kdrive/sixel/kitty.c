@@ -39,6 +39,8 @@
 #include <unistd.h>
 #include <zlib.h>
 #include <errno.h>
+#include <sys/mman.h>
+#include <fcntl.h>     /* O_CREAT, O_RDWR, O_TRUNC */
 
 #undef USE_DECMOUSE
 #undef USE_FILTER_RECTANGLE
@@ -138,12 +140,15 @@ KdCardFuncs kittyFuncs = {
     .createRes = kittyCreateRes,    /* createRes */
 };
 
-/* Transfer mode: 1 = tempfile (t=t), 0 = direct/inline (t=d) */
-static int kitty_use_tempfile = 1;
+/* Transfer mode: 0 = direct (t=d), 1 = tempfile (t=t), 2 = shm (t=s) */
+static int kitty_transfer_mode = 1;  /* Default: tempfile */
 /* Compression: 1 = zlib (o=z), 0 = raw RGB */
 static int kitty_compress = 1;
 
 #define KITTY_TEMPFILE_PATH "/tmp/xkitty-frame.bin"
+#define KITTY_SHM_PREFIX "/xkitty-frame-"
+static char kitty_shm_name[64];
+static const char *kitty_display_name = ":0";  /* argv lifetime: valid for entire process */
 
 int mouseState = 0;
 
@@ -485,7 +490,7 @@ static void
 kitty_send_frame(KITTY_Driver *driver)
 {
     /* t=t mode: write to tempfile, send path only */
-    if (kitty_use_tempfile) {
+    if (kitty_transfer_mode == 1) {
         kitty_send_frame_tempfile(driver);
         return;
     }
@@ -1103,9 +1108,9 @@ int ddxProcessArgument(int argc, char **argv, int i)
     if (!strcmp(argv[i], "-kitty-transfer")) {
         if (i + 1 < argc) {
             if (!strcmp(argv[i + 1], "d"))
-                kitty_use_tempfile = 0;
+                kitty_transfer_mode = 0;
             else if (!strcmp(argv[i + 1], "t"))
-                kitty_use_tempfile = 1;
+                kitty_transfer_mode = 1;
             else
                 UseMsg();
             return 2;
