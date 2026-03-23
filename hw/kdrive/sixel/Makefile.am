@@ -17,7 +17,8 @@ Xkitty_LDADD = \
 	@XSIXEL_LIBS@ \
 	@KDRIVE_MAIN_LIB@ \
 	$(XSERVER_SYS_LIBS) \
-	-lz
+	-lz \
+	-lrt
 
 Xkitty_DEPENDENCIES = @KDRIVE_LOCAL_LIBS@
 
