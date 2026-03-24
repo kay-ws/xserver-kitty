@@ -41,6 +41,7 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <fcntl.h>     /* O_CREAT, O_RDWR, O_TRUNC */
+#include <time.h>      /* clock_gettime, CLOCK_MONOTONIC */
 
 #undef USE_DECMOUSE
 #undef USE_FILTER_RECTANGLE
@@ -153,6 +154,12 @@ static const char *kitty_display_name = ":0";  /* argv lifetime: valid for entir
 int mouseState = 0;
 
 enum { NUMRECTS = 32, FULLSCREEN_REFRESH_TIME = 1000 };
+
+/* Frame rate cap: minimum interval between frames in milliseconds */
+#define KITTY_FRAME_INTERVAL_MS 16  /* ~60 fps */
+static struct timespec kitty_last_frame_time;
+static int kitty_frame_pending;
+static OsTimerPtr kitty_frame_timer;
 
 typedef struct
 {
@@ -679,18 +686,49 @@ static void KITTY_FlipRects(KITTY_Driver *driver, int numrects, pixman_box16_t *
 }
 
 
+static void KITTY_SendPendingFrame(KITTY_Driver *driver)
+{
+    printf("\033[H");
+    kitty_send_frame(driver);
+    clock_gettime(CLOCK_MONOTONIC, &kitty_last_frame_time);
+    kitty_frame_pending = 0;
+}
+
+static CARD32 KITTY_FrameTimerCallback(OsTimerPtr timer, CARD32 time, void *arg)
+{
+    KITTY_Driver *driver = (KITTY_Driver *)arg;
+    if (kitty_frame_pending && driver) {
+        KITTY_SendPendingFrame(driver);
+    }
+    return 0;  /* one-shot: don't reschedule */
+}
+
 static void KITTY_UpdateRects(KITTY_Driver *driver, int numrects, pixman_box16_t *rects)
 {
+    struct timespec now;
+    long elapsed_ms;
+
     if (numrects == 0)
         return;
 
     KITTY_FlipRects(driver, numrects, rects);
 
-    /* Move cursor to top-left */
-    printf("\033[H");
+    /* Frame rate throttle */
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    elapsed_ms = (now.tv_sec - kitty_last_frame_time.tv_sec) * 1000
+               + (now.tv_nsec - kitty_last_frame_time.tv_nsec) / 1000000;
 
-    /* Send full frame via Kitty Graphics Protocol */
-    kitty_send_frame(driver);
+    if (elapsed_ms < KITTY_FRAME_INTERVAL_MS) {
+        /* Too soon — mark pending and schedule timer for deferred send */
+        kitty_frame_pending = 1;
+        kitty_frame_timer = TimerSet(kitty_frame_timer, 0,
+                                     KITTY_FRAME_INTERVAL_MS - elapsed_ms,
+                                     KITTY_FrameTimerCallback, driver);
+        return;
+    }
+
+    /* Enough time passed — send immediately */
+    KITTY_SendPendingFrame(driver);
 }
 
 
@@ -1439,6 +1477,12 @@ static void kittyFini(void)
         }
     }
     tty_restore();
+
+    /* Clean up frame timer */
+    if (kitty_frame_timer) {
+        TimerFree(kitty_frame_timer);
+        kitty_frame_timer = NULL;
+    }
 
     /* Clean up shared memory object on normal exit */
     if (kitty_transfer_mode == 2 && kitty_shm_name[0] != '\0')
