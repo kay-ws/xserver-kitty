@@ -487,12 +487,78 @@ kitty_send_frame_tempfile(KITTY_Driver *driver)
 }
 
 static void
+kitty_send_frame_shm(KITTY_Driver *driver)
+{
+    const unsigned char *data;
+    size_t data_size;
+
+    int rgb_size = driver->w * driver->h * 3;
+
+    if (kitty_compress) {
+        uLongf compressed_size = driver->zlib_buf_size;
+        int zret = compress2(driver->zlib_buf, &compressed_size,
+                             driver->bitmap, rgb_size, Z_BEST_SPEED);
+        if (zret != Z_OK) {
+            fprintf(stderr, "[kitty] compress2 failed: %d\n", zret);
+            return;
+        }
+        data = (unsigned char *)driver->zlib_buf;
+        data_size = compressed_size;
+    } else {
+        data = driver->bitmap;
+        data_size = (size_t)rgb_size;
+    }
+
+    if (data_size == 0) return;
+
+    /* Create/truncate shared memory object */
+    int fd = shm_open(kitty_shm_name, O_CREAT | O_RDWR | O_TRUNC, 0600);
+    if (fd < 0) {
+        fprintf(stderr, "[kitty] shm_open failed: %s\n", strerror(errno));
+        return;
+    }
+
+    if (ftruncate(fd, data_size) < 0) {
+        fprintf(stderr, "[kitty] ftruncate failed: %s\n", strerror(errno));
+        close(fd);
+        return;
+    }
+
+    void *ptr = mmap(NULL, data_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (ptr == MAP_FAILED) {
+        fprintf(stderr, "[kitty] mmap failed: %s\n", strerror(errno));
+        close(fd);
+        return;
+    }
+
+    memcpy(ptr, data, data_size);
+    munmap(ptr, data_size);
+    close(fd);
+
+    /* Send Kitty Graphics command with SHM name (no base64 encoding needed) */
+    if (kitty_compress) {
+        printf("\033_Ga=T,i=1,f=24,o=z,q=2,s=%d,v=%d,t=s;%s\033\\",
+               driver->w, driver->h, kitty_shm_name);
+    } else {
+        printf("\033_Ga=T,i=1,f=24,q=2,s=%d,v=%d,t=s;%s\033\\",
+               driver->w, driver->h, kitty_shm_name);
+    }
+    fflush(stdout);
+}
+
+static void
 kitty_send_frame(KITTY_Driver *driver)
 {
-    /* t=t mode: write to tempfile, send path only */
-    if (kitty_transfer_mode == 1) {
+    switch (kitty_transfer_mode) {
+    case 2:
+        kitty_send_frame_shm(driver);
+        return;
+    case 1:
         kitty_send_frame_tempfile(driver);
         return;
+    default:
+        /* t=d: existing inline base64 transfer */
+        break;
     }
 
     /* t=d mode: existing inline base64 transfer */
