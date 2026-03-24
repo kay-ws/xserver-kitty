@@ -130,6 +130,12 @@ xorg-server (X.Org Foundation)
     -> Xkitty (Kitty Graphics Protocol output)
 ```
 
+## Acknowledgments
+
+- [**@sanohiro**](https://github.com/sanohiro) — Author of [bcon](https://github.com/sanohiro/bcon), the GPU-accelerated console terminal that inspired this project. Xkitty was built to bring arbitrary X11 applications to bcon's Kitty Graphics Protocol renderer.
+- [**Hayaki Saito**](https://github.com/saitoha) — Author of [xserver-SIXEL](https://github.com/saitoha/xserver-SIXEL), the SIXEL-output KDrive X server that Xkitty is forked from. Without this pioneering work, Xkitty would not exist.
+- **The X.Org Foundation** — For the X server codebase and KDrive framework.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
