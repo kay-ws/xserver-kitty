@@ -1434,6 +1434,10 @@ static void kittyFini(void)
     }
     tty_restore();
 
+    /* Clean up shared memory object on normal exit */
+    if (kitty_transfer_mode == 2 && kitty_shm_name[0] != '\0')
+        shm_unlink(kitty_shm_name);
+
     if (g_driver) {
         free(g_driver->zlib_buf);
         free(g_driver->base64_buf);
