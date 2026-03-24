@@ -535,13 +535,19 @@ kitty_send_frame_shm(KITTY_Driver *driver)
     munmap(ptr, data_size);
     close(fd);
 
-    /* Send Kitty Graphics command with SHM name (no base64 encoding needed) */
+    /* base64 encode the SHM name (Kitty Graphics payload is always base64) */
+    char name_b64[256];
+    base64_encode(name_b64,
+                  (const unsigned char *)kitty_shm_name,
+                  strlen(kitty_shm_name));
+
+    /* Send Kitty Graphics command with SHM name */
     if (kitty_compress) {
         printf("\033_Ga=T,i=1,f=24,o=z,q=2,s=%d,v=%d,t=s;%s\033\\",
-               driver->w, driver->h, kitty_shm_name);
+               driver->w, driver->h, name_b64);
     } else {
         printf("\033_Ga=T,i=1,f=24,q=2,s=%d,v=%d,t=s;%s\033\\",
-               driver->w, driver->h, kitty_shm_name);
+               driver->w, driver->h, name_b64);
     }
     fflush(stdout);
 }
