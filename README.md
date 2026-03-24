@@ -4,6 +4,8 @@ A lightweight KDrive-based X server that renders to any terminal supporting the 
 
 Run X11 applications (xeyes, xterm, twm, etc.) directly inside your terminal — no X11 display server or Wayland compositor required.
 
+![Xkitty running xeyes and xterm inside bcon](docs/images/xkitty-screenshot.png)
+
 ## How It Works
 
 Xkitty is a fork of [xserver-SIXEL](https://github.com/aspect-ux/xserver-SIXEL) with the SIXEL output backend replaced by the Kitty Graphics Protocol. It captures the X11 framebuffer, converts it to RGB, optionally compresses it with zlib, and sends it to the terminal via Kitty Graphics escape sequences.
