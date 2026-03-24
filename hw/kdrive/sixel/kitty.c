@@ -826,6 +826,12 @@ static Bool kittyScreenInit(KdScreenInfo *screen)
         return FALSE;
     }
 
+    /* Build SHM name from display name (e.g. "/xkitty-frame-:1") */
+    if (kitty_transfer_mode == 2) {
+        snprintf(kitty_shm_name, sizeof(kitty_shm_name),
+                 KITTY_SHM_PREFIX "%s", kitty_display_name);
+    }
+
     driver->randr = screen->randr;
     screen->driver = driver;
 
@@ -1165,7 +1171,7 @@ void ddxBeforeReset(void)
 void ddxUseMsg(void)
 {
     KdUseMsg();
-    ErrorF("-kitty-transfer t|d   Kitty Graphics transfer mode (default: t=tempfile)\n");
+    ErrorF("-kitty-transfer t|d|s   Kitty Graphics transfer mode (default: t=tempfile)\n");
     ErrorF("-nocompress            Disable zlib compression (send raw RGB)\n");
 }
 
@@ -1177,6 +1183,8 @@ int ddxProcessArgument(int argc, char **argv, int i)
                 kitty_transfer_mode = 0;
             else if (!strcmp(argv[i + 1], "t"))
                 kitty_transfer_mode = 1;
+            else if (!strcmp(argv[i + 1], "s"))
+                kitty_transfer_mode = 2;
             else
                 UseMsg();
             return 2;
@@ -1187,6 +1195,11 @@ int ddxProcessArgument(int argc, char **argv, int i)
     if (!strcmp(argv[i], "-nocompress")) {
         kitty_compress = 0;
         return 1;
+    }
+
+    /* Capture display name (e.g. ":1") for SHM naming */
+    if (argv[i][0] == ':') {
+        kitty_display_name = argv[i];
     }
     return KdProcessArgument(argc, argv, i);
 }
