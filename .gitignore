@@ -80,3 +80,9 @@ core
 doltcompile
 doltlibtool
 xserver.ent
+
+# Xkitty build artifacts
+Xkitty-new
+hw/kdrive/sixel/Xkitty
+hw/kdrive/sixel/Xsixel
+configure~
